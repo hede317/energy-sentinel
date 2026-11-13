@@ -24,6 +24,17 @@ const S = {
   metric: 'p', hours: 24, trendSel: new Set(FEEDERS),
   alarmFilter: 'active', energyView: 'day',
   tariff: {}, currency: 'CNY',
+  touSpans: null, hist: [], todayKwh: null, soe: [],
+};
+const THRESHOLDS = {
+  u: [{ v: 400, c: '#EF4444' }, { v: 360, c: '#F59E0B' }],
+  pressure: [{ v: 0.38, c: '#F59E0B' }],
+  f: [{ v: 50.5, c: '#F59E0B' }, { v: 49.5, c: '#F59E0B' }],
+  pf: [{ v: 0.8, c: '#F59E0B' }],
+};
+const hexA = (hex, a) => {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`;
 };
 
 /* ---------- i18n ---------- */
@@ -38,6 +49,7 @@ async function loadLang(l) {
   document.documentElement.lang = l;
   document.documentElement.dir = l === 'ur' ? 'rtl' : 'ltr';
   document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll('[data-i18n-ph]').forEach(el => { el.placeholder = t(el.dataset.i18nPh); });
   document.getElementById('langSel').value = l;
   buildFeeders(); buildCards(); bindTrendDevs(); loadApiDoc();
   renderTou(); updateDiagram(); loadTab(curTab);
@@ -73,9 +85,9 @@ function buildFeeders() {
   for (const id of FEEDERS) {
     const { x, color, icon } = CFG[id];
     svg += `
-    <line x1="${x}" y1="160" x2="${x}" y2="172" class="wire"/>
+    <line x1="${x}" y1="160" x2="${x}" y2="172" class="wire flow" id="fl-${id}"/>
     <rect id="brk-${id}" x="${x - 13}" y="172" width="26" height="16" rx="2" class="breaker"/>
-    <line x1="${x}" y1="188" x2="${x}" y2="200" class="wire"/>
+    <line x1="${x}" y1="188" x2="${x}" y2="200" class="wire flow" id="fl2-${id}"/>
     <g id="mb-${id}" style="cursor:pointer">
       <rect x="${x - 62}" y="200" width="124" height="56" rx="6" class="meter-box" id="box-${id}"/>
       <circle id="dot-${id}" cx="${x - 50}" cy="212" r="4" class="dot"/>
@@ -95,7 +107,7 @@ function buildFeeders() {
     };
     document.getElementById('brk-' + id).onclick = () => {
       const on = !(S.devices[id]?.breaker ?? 1);
-      api('/api/sim/cmd', { method: 'POST', body: JSON.stringify({ action: 'breaker', device: id, on }) });
+      openBreakerModal(id, on);
     };
   }
 }
@@ -110,7 +122,22 @@ function updateDiagram() {
     if (brk) brk.classList.toggle('off', !st.breaker);
   };
   upd('meter-main', ['p', 'u', 'i', 'pf']);
-  FEEDERS.forEach(id => upd(id, ['p', 'u', 'i']));
+  FEEDERS.forEach(id => {
+    upd(id, ['p', 'u', 'i']);
+    const st = S.devices[id];
+    const spd = !st || !st.breaker || !st._comm ? 'slow' : st.p > 40 ? 'fast' : '';
+    ['fl-' + id, 'fl2-' + id].forEach(fid => {
+      const el = document.getElementById(fid);
+      if (el) { el.classList.remove('slow', 'fast'); if (spd) el.classList.add(spd); else el.classList.remove('flow'); }
+    });
+  });
+  const bus = document.querySelector('.busbar');
+  if (bus) {
+    const lr = S.devices['meter-main']?.load_rate || 0;
+    bus.classList.add('flow');
+    bus.classList.remove('slow', 'fast');
+    if (lr > 75) bus.classList.add('fast'); else if (lr < 40) bus.classList.add('slow');
+  }
   document.getElementById('nm-meter-main').textContent = t('dev.meter-main');
 }
 
@@ -162,13 +189,25 @@ function openSSE() {
     if (m.type === 'tick') {
       S.devices = m.devices; S.counts = m.alarm_counts || S.counts;
       if (m.tou_rate) S.tou_rate = m.tou_rate;
+      const main = S.devices['meter-main'];
+      if (main) {
+        S.hist.push(main.p); if (S.hist.length > 120) S.hist.shift();
+      }
       renderTou(); updateDiagram(); updateCards(); updateWater();
+      updateStatusbar(); updateKpis(); renderSpark();
     } else if (m.type === 'alarm') {
       const a = m.alarm || {};
       if (m.event === 'triggered') {
         toast('🚨 ' + locMsg(a), 'danger');
+        soePush(a);
         if (curTab === 'alarms') loadAlarms();
-      } else if (m.event === 'closed' && curTab === 'alarms') loadAlarms();
+      } else {
+        const it = S.soe.find(x => x.id === a.id);
+        if (it) { it.status = m.event === 'acked' ? 'acked' : 'closed'; }
+        else if (m.event === 'closed') soePush(a);
+        renderSoe();
+        if (curTab === 'alarms') loadAlarms();
+      }
     }
   };
 }
@@ -206,11 +245,11 @@ async function loadTrend() {
   const devs = [...S.trendSel]; if (!devs.length) return;
   const d = await api(`/api/history?devices=${devs.join(',')}&metric=${S.metric}&hours=${S.hours}`);
   const series = devs.map(id => ({ name: t('dev.' + id), color: CFG[id].color, data: d.series[id] || [] }));
-  drawChart(document.getElementById('trendCanvas'), series);
+  drawChart(document.getElementById('trendCanvas'), series, { thresholds: THRESHOLDS[S.metric] || [], bands: S.metric === 'p' });
   document.getElementById('trendLegend').innerHTML = series.map(s =>
     `<span><span class="key" style="background:${s.color}"></span>${s.name}</span>`).join('');
 }
-function drawChart(canvas, series) {
+function drawChart(canvas, series, opts = {}) {
   const dpr = window.devicePixelRatio || 1;
   if (!canvas.dataset.h) canvas.dataset.h = canvas.getAttribute('height');
   const W = canvas.clientWidth || 900, H = +canvas.dataset.h;
@@ -236,12 +275,52 @@ function drawChart(canvas, series) {
     const v = x0 + (x1 - x0) * i / 4, x = px(v);
     ctx.fillText(fdate(v).slice(5), x - 22, H - 8);
   }
+  // TOU 峰平谷背景色带
+  if (opts.bands && S.touSpans) {
+    const colors = { peak: 'rgba(245,158,11,.07)', flat: 'rgba(96,165,250,.05)', valley: 'rgba(16,185,129,.06)' };
+    let cur = new Date(x0); cur.setMinutes(0, 0, 0);
+    let guard = 0;
+    while (cur.getTime() < x1 && guard++ < 400) {
+      const nx = new Date(cur.getTime() + 3600_000);
+      const h = cur.getHours();
+      const rate = touRateOf(h);
+      ctx.fillStyle = colors[rate];
+      ctx.fillRect(px(cur.getTime()), T, px(Math.min(nx.getTime(), x1)) - px(cur.getTime()), H - T - B);
+      cur = nx;
+    }
+  }
   for (const s of series) {
     if (!s.data.length) continue;
+    // 渐变填充
+    ctx.beginPath();
+    s.data.forEach((p, i) => i ? ctx.lineTo(px(p[0]), py(p[1])) : ctx.moveTo(px(p[0]), py(p[1])));
+    const g = ctx.createLinearGradient(0, T, 0, H - B);
+    g.addColorStop(0, hexA(s.color, .22)); g.addColorStop(1, hexA(s.color, 0));
+    ctx.save();
+    ctx.lineTo(px(s.data[s.data.length - 1][0]), H - B);
+    ctx.lineTo(px(s.data[0][0]), H - B);
+    ctx.closePath(); ctx.fillStyle = g; ctx.fill();
+    ctx.restore();
     ctx.strokeStyle = s.color; ctx.lineWidth = 1.8; ctx.beginPath();
     s.data.forEach((p, i) => i ? ctx.lineTo(px(p[0]), py(p[1])) : ctx.moveTo(px(p[0]), py(p[1])));
     ctx.stroke();
   }
+  // 阈值警戒线 markLine
+  (opts.thresholds || []).forEach(th => {
+    if (th.v < y0 || th.v > y1) return;
+    const y = py(th.v);
+    ctx.strokeStyle = th.c; ctx.setLineDash([6, 5]); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(W - R, y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = th.c; ctx.fillText(String(th.v), W - R - 30, y - 3);
+  });
+}
+function touRateOf(h) {
+  const hit = spans => (spans || []).some(([a, b]) => (a <= b ? h >= a && h < b : h >= a || h < b));
+  if (!S.touSpans) return 'flat';
+  if (hit(S.touSpans.peak)) return 'peak';
+  if (hit(S.touSpans.flat)) return 'flat';
+  return 'valley';
 }
 
 /* ---------- 供水实验台 ---------- */
@@ -266,6 +345,98 @@ async function loadWaterTrend() {
     { name: 'Hz', color: '#f59e0b', data: d2.series['ws-pump'] || [] },
   ]);
 }
+
+/* ---------- 态势栏 / KPI / SOE ---------- */
+function updateStatusbar() {
+  const power = Object.keys(CFG).filter(k => k !== 'ws-pump');
+  const online = power.filter(id => S.devices[id] && S.devices[id]._comm).length;
+  const el = document.getElementById('sbOnline');
+  if (el) { el.innerHTML = `🟢 ${online}/${power.length}`; el.title = t('sb.online'); }
+  const f = document.getElementById('sbFreq');
+  if (f && S.devices['meter-main']) f.textContent = f1(S.devices['meter-main'].f) + ' Hz';
+}
+function buildKpis() {
+  const wrap = document.getElementById('kpiRow');
+  if (!wrap || wrap.children.length) return;
+  const items = [
+    ['totalp', 'kpi.totalp', 'kW', true], ['today', 'kpi.today', 'kWh', false],
+    ['loadrate', 'kpi.loadrate', '%', false], ['pf', 'kpi.pf', '', false],
+    ['imbalance', 'kpi.imbalance', '%', false], ['thd', 'kpi.thd', '%', false],
+  ];
+  wrap.innerHTML = items.map(([id, key, unit, spark]) => `
+    <div class="kpi"><div class="t">${t(key)}</div>
+      <div class="v num"><span id="kpi-${id}">--</span> <span class="unit">${unit}</span></div>
+      ${spark ? '<canvas id="sparkP" height="26"></canvas>' : ''}
+    </div>`).join('');
+}
+function updateKpis() {
+  const m = S.devices['meter-main']; if (!m) return;
+  const set = (id, v) => { const el = document.getElementById('kpi-' + id); if (el) el.textContent = v; };
+  set('totalp', f1(m.p)); set('loadrate', f1(m.load_rate)); set('pf', f2(m.pf));
+  set('imbalance', f1(m.imbalance)); set('thd', f1(m.thd));
+  if (S.todayKwh != null) set('today', f1(S.todayKwh));
+}
+function renderSpark() {
+  const cv = document.getElementById('sparkP'); if (!cv || S.hist.length < 2) return;
+  const dpr = window.devicePixelRatio || 1;
+  if (!cv.dataset.h) cv.dataset.h = cv.getAttribute('height');
+  const W = cv.clientWidth || 160, H = +cv.dataset.h;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const ctx = cv.getContext('2d'); ctx.scale(dpr, dpr); ctx.clearRect(0, 0, W, H);
+  const mn = Math.min(...S.hist), mx = Math.max(...S.hist), rg = (mx - mn) || 1;
+  ctx.strokeStyle = '#06B6D4'; ctx.lineWidth = 1.5; ctx.beginPath();
+  S.hist.forEach((v, i) => {
+    const x = i / (S.hist.length - 1) * (W - 2) + 1;
+    const y = H - 3 - (v - mn) / rg * (H - 6);
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  });
+  ctx.stroke();
+}
+async function fetchToday() {
+  try { const d = await api('/api/report/day'); S.todayKwh = d.totals.total_kwh; updateKpis(); } catch (e) { /* 忽略 */ }
+}
+function soePush(a) {
+  S.soe.unshift(Object.assign({}, a));
+  if (S.soe.length > 40) S.soe.pop();
+  renderSoe(); updateStatusbarSev();
+}
+function updateStatusbarSev() {
+  const el = document.getElementById('sbSev');
+  if (!el) return;
+  const rank = { critical: 3, warning: 2, info: 1 };
+  const open = S.soe.filter(x => x.status === 'active' || x.status === 'acked');
+  const top = open.sort((x, y) => (rank[y.severity] || 0) - (rank[x.severity] || 0))[0];
+  if (!top) { el.textContent = '✅'; el.className = 'badge sb'; return; }
+  el.innerHTML = `<span class="pulse">●</span> ${t('alarm.s' + top.severity)} ×${open.length}`;
+  el.className = 'badge sb sev ' + top.severity;
+}
+function renderSoe() {
+  const host = document.getElementById('soeList'); if (!host) return;
+  if (!S.soe.length) { host.innerHTML = `<p class="muted">${t('soe.empty')}</p>`; return; }
+  const dotc = { critical: '#EF4444', warning: '#F59E0B', info: '#60A5FA' };
+  host.innerHTML = S.soe.map(a => `
+    <div class="soe-row">
+      <span class="soe-dot ${a.status === 'active' ? 'pulse' : ''}" style="background:${dotc[a.severity] || '#94A3B8'}"></span>
+      <span class="when num">${fdate(new Date(a.triggered_at).getTime())}</span>
+      <span class="sev ${a.severity}">${t('alarm.s' + a.severity)}</span>
+      <span class="grow">${esc(devName(a.device_id))} · ${esc(locMsg(a))}</span>
+      <span class="st ${a.status}">${t('alarm.' + a.status)}</span>
+      ${a.status === 'active' ? `<button class="btn sm" onclick="ackSoe(${a.id})">${t('alarm.ack')}</button>` : ''}
+    </div>`).join('');
+  updateStatusbarSev();
+}
+async function ackSoe(id) { await api(`/api/alarms/${id}/ack`, { method: 'POST' }); const it = S.soe.find(x => x.id === id); if (it) it.status = 'acked'; renderSoe(); }
+/* ---------- 遥控二次确认（选择—返校—执行） ---------- */
+let MODAL = null;
+function openBreakerModal(id, on) {
+  MODAL = { device: id, on };
+  const act = on ? 'breaker_close' : 'breaker_open';
+  document.getElementById('modalInfo').textContent = `${act} → ${devName(id)}`;
+  document.getElementById('modalCheck').textContent = t('modal.returncheck').replaceAll('{action}', act).replaceAll('{device}', devName(id));
+  document.getElementById('modalReason').value = '';
+  document.getElementById('modal').hidden = false;
+}
+function closeBreakerModal() { document.getElementById('modal').hidden = true; MODAL = null; }
 
 /* ---------- 能耗报表 ---------- */
 async function loadEnergy() {
@@ -530,7 +701,25 @@ function bind() {
   bind();
   await loadLang(S.lang);
   openSSE();
-  api('/api/state').then(s => { S.tariff = s.tariff; S.currency = s.currency; }).catch(() => {});
+  api('/api/state').then(s => {
+    S.tariff = s.tariff; S.currency = s.currency;
+    S.touSpans = s.tou_spans || null;
+  }).catch(() => {});
+  buildKpis();
+  fetchToday(); setInterval(fetchToday, 60_000);
+  api('/api/alarms?status=all&limit=40').then(d => { S.soe = d.alarms.reverse(); renderSoe(); }).catch(() => {});
+  setInterval(() => {
+    const el = document.getElementById('sbClock');
+    if (el) el.textContent = new Date().toLocaleTimeString([], { hour12: false });
+  }, 1000);
+  document.getElementById('modalCancel').onclick = closeBreakerModal;
+  document.getElementById('modalExec').onclick = () => {
+    if (!MODAL) return closeBreakerModal();
+    api('/api/sim/cmd', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'breaker', device: MODAL.device, on: MODAL.on, reason: document.getElementById('modalReason').value.trim(), user: 'ops' }),
+    }).then(() => { closeBreakerModal(); toast('✅ ' + t('common.saved')); }).catch(closeBreakerModal);
+  };
   setInterval(() => { if (curTab === 'trend') loadTrend(); }, 60_000);
   setInterval(() => { if (curTab === 'water') loadWaterTrend(); }, 30_000);
 })();

@@ -77,6 +77,18 @@ CREATE TABLE IF NOT EXISTS settings(
   k TEXT PRIMARY KEY,
   v TEXT NOT NULL
 );
+-- 遥控/遥调操作审计日志（选择—返校—执行 全程留痕）
+CREATE TABLE IF NOT EXISTS audit_logs(
+  id SERIAL PRIMARY KEY,
+  ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+  username TEXT,
+  action TEXT NOT NULL,
+  device TEXT,
+  detail TEXT,
+  result TEXT NOT NULL DEFAULT 'ok'
+);
+-- 进线总表额定电流（负载率计算口径）
+UPDATE devices SET meta = jsonb_set(meta, '{rated_i}', '400'::jsonb, true) WHERE id='meter-main' AND NOT (meta ? 'rated_i');
 
 -- ===== 种子数据（幂等）=====
 INSERT INTO devices(id,name,kind,driver,meta) VALUES

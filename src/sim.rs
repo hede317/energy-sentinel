@@ -211,13 +211,29 @@ impl SimWorld {
         let i_main = p_main * 1000.0 / (1.732 * u_m * pf_main.max(0.1));
         let epi = self.epi.entry("meter-main".into()).or_insert(0.0);
         *epi += p_main * dt / 3600.0;
+        // 电力衍生指标（教学口径）：三相电压轻度不平衡 + THD + 变压器负载率（额定 400A）
+        let ph = 220.0;
+        let ua = ph * (1.0 + 0.013 * ((t / 60.0) * std::f64::consts::PI).sin()) + Self::noise(&mut rng, 0.5);
+        let ub = ph * (1.0 - 0.009) + Self::noise(&mut rng, 0.5);
+        let uc = ph * (1.0 - 0.004) + Self::noise(&mut rng, 0.5);
+        let mean_ph = (ua + ub + uc) / 3.0;
+        let imbalance = ((ua.max(ub).max(uc) - ua.min(ub).min(uc)) / mean_ph) * 100.0;
+        let thd = (2.6 + 1.0 * ((t / 37.0) * std::f64::consts::PI).sin() + Self::noise(&mut rng, 0.3)).clamp(1.5, 5.0);
+        let load_rate = i_main / 400.0 * 100.0;
+        let mut ex_main = std::collections::HashMap::new();
+        ex_main.insert("ua".into(), (ua * 10.0).round() / 10.0);
+        ex_main.insert("ub".into(), (ub * 10.0).round() / 10.0);
+        ex_main.insert("uc".into(), (uc * 10.0).round() / 10.0);
+        ex_main.insert("imbalance".into(), (imbalance * 10.0).round() / 10.0);
+        ex_main.insert("thd".into(), (thd * 10.0).round() / 10.0);
+        ex_main.insert("load_rate".into(), (load_rate * 10.0).round() / 10.0);
         snaps.push(Snap {
             device: "meter-main".into(), ts, u: (u_m * 10.0).round() / 10.0,
             i: (i_main * 10.0).round() / 10.0, p: (p_main * 10.0).round() / 10.0,
             q: (p_main * (1.0 - pf_main * pf_main).sqrt() / pf_main.max(0.1) * 10.0).round() / 10.0,
             pf: (pf_main * 1000.0).round() / 1000.0, f: ((50.0 + Self::noise(&mut rng, 0.015)) * 10.0).round() / 10.0,
             epi: (*epi * 10.0).round() / 10.0, breaker: !self.breaker_open.contains("meter-main"), comm: self.comm_ok("meter-main", t),
-            extra: Default::default(),
+            extra: ex_main,
         });
         // 恒压供水实验台
         snaps.push(self.water_tick(dt, &mut rng, ts));

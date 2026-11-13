@@ -113,5 +113,20 @@
   "ws.freq": "ফ্রিকোয়েন্সি",
   "ws.flow": "প্রবাহ",
   "alarm.waterlow": "{device} পানির চাপ কম {value}MPa (সীমা {threshold})",
-  "api.token_show": "দেখান"
+  "api.token_show": "দেখান",
+  "sb.online": "অনলাইন ডিভাইস",
+  "sb.freq": "গ্রিড ফ্রিকোয়েন্সি",
+  "kpi.totalp": "মোট অ্যাকটিভ পাওয়ার",
+  "kpi.today": "আজকের জ্বালানি",
+  "kpi.loadrate": "ট্রান্সফরমার লোড",
+  "kpi.pf": "সিস্টেম PF",
+  "kpi.imbalance": "ফেজ ভারসাম্যহীনতা",
+  "kpi.thd": "THD",
+  "soe.title": "SOE লাইভ ইভেন্ট স্ট্রিম",
+  "soe.empty": "কোনো ইভেন্ট নেই",
+  "modal.title": "রিমোট কন্ট্রোল নিশ্চিতকরণ (নির্বাচন–যাচাই–সম্পাদন)",
+  "modal.reason": "কারণ (ঐচ্ছিক)",
+  "modal.exec": "সম্পাদন",
+  "modal.cancel": "বাতিল",
+  "modal.returncheck": "যাচাই: {action} → {device}"
 }

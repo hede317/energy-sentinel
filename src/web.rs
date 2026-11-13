@@ -39,6 +39,7 @@ pub fn router(app: SharedApp) -> Router {
         .route("/api/report/month", get(report_month))
         .route("/api/devices", get(api_devices))
         .route("/api/sim/cmd", post(sim_cmd))
+        .route("/api/audit", get(audit_list).post(audit_post))
         .route("/api/settings", get(settings_get).post(settings_post))
         .route("/api/settings/token", get(token_show).post(token_regen))
         .route("/api/webhook/test", post(webhook_test))
@@ -164,6 +165,7 @@ async fn api_state(State(app): State<SharedApp>) -> Response {
         "ts": Utc::now().timestamp_millis(),
         "devices": devices,
         "tou_rate": tou.rate_of(hour),
+        "tou_spans": {"peak": tou.peak, "flat": tou.flat, "valley": tou.valley},
         "tariff": tou.tariff,
         "currency": tou.currency,
     }))
@@ -601,6 +603,17 @@ async fn sim_cmd(State(app): State<SharedApp>, Json(b): Json<Value>) -> Response
         "breaker" => {
             let on = b.get("on").and_then(|v| v.as_bool()).unwrap_or(true);
             sim.breaker(device, on);
+            let act = if on { "breaker_close" } else { "breaker_open" };
+            let reason = b.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+            let user = b.get("user").and_then(|v| v.as_str()).unwrap_or("ops");
+            let c = app.db.lock().await;
+            let _ = c
+                .execute(
+                    "INSERT INTO audit_logs(username,action,device,detail,result) VALUES($1,$2,$3,$4,'ok')",
+                    &[&user, &act, &device, &reason],
+                )
+                .await;
+            drop(c);
         }
         "clear" => sim.clear(),
         "water_sp" => {
@@ -615,6 +628,49 @@ async fn sim_cmd(State(app): State<SharedApp>, Json(b): Json<Value>) -> Response
     }
     drop(sim);
     Json(json!({"ok": true})).into_response()
+}
+
+// ---------- 操作审计 ----------
+async fn audit_post(State(app): State<SharedApp>, Json(b): Json<Value>) -> Response {
+    let action = b.get("action").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if action.is_empty() { return err("action required", StatusCode::BAD_REQUEST); }
+    let user = b.get("user").and_then(|v| v.as_str()).unwrap_or("ops").to_string();
+    let device = b.get("device").and_then(|v| v.as_str()).map(|x| x.to_string());
+    let detail = b.get("detail").and_then(|v| v.as_str()).map(|x| x.to_string());
+    let c = app.db.lock().await;
+    let ok = c
+        .execute(
+            "INSERT INTO audit_logs(username,action,device,detail,result) VALUES($1,$2,$3,$4,'ok')",
+            &[&user, &action, &device, &detail],
+        )
+        .await
+        .is_ok();
+    drop(c);
+    if ok { Json(json!({"ok": true})).into_response() } else { err("failed", StatusCode::INTERNAL_SERVER_ERROR) }
+}
+
+async fn audit_list(State(app): State<SharedApp>) -> Response {
+    let c = app.db.lock().await;
+    let rows = c
+        .query(
+            "SELECT ts,username,action,device,detail,result FROM audit_logs ORDER BY id DESC LIMIT 50",
+            &[],
+        )
+        .await
+        .unwrap_or_default();
+    drop(c);
+    let list: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            let ts: DateTime<Utc> = r.get(0);
+            json!({
+                "ts": ts.to_rfc3339(), "user": r.get::<_, Option<String>>(1),
+                "action": r.get::<_, String>(2), "device": r.get::<_, Option<String>>(3),
+                "detail": r.get::<_, Option<String>>(4), "result": r.get::<_, String>(5),
+            })
+        })
+        .collect();
+    Json(json!({"audit": list})).into_response()
 }
 
 // ---------- 设置 / webhook ----------

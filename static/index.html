@@ -16,6 +16,10 @@
     </div>
   </div>
   <div class="header-right">
+    <span id="sbOnline" class="badge sb" title="在线设备/总数">--/--</span>
+    <span id="sbFreq" class="badge sb num">-- Hz</span>
+    <span id="sbSev" class="badge sb"></span>
+    <span id="sbClock" class="badge sb num">--:--:--</span>
     <span id="touBadge" class="badge"></span>
     <button id="bellBtn" class="bell" title="alarms">🔔<span id="bellCount" class="bell-count" hidden>0</span></button>
     <select id="langSel">
@@ -75,7 +79,12 @@
     <button class="btn warn" id="btnComm" data-i18n="dev.sim.comm_fault">模拟总表通信故障</button>
     <button class="btn danger" id="btnClear" data-i18n="dev.sim.clear">清除全部</button>
   </div>
+  <div id="kpiRow" class="kpis"></div>
   <div id="devCards" class="cards"></div>
+  <div class="card glow">
+    <div class="card-title" data-i18n="soe.title">SOE 实时事件流</div>
+    <div id="soeList" class="soe"><p class="muted" data-i18n="soe.empty">暂无事件</p></div>
+  </div>
 </section>
 
 <!-- ===== 供水实验台 ===== -->
@@ -244,6 +253,18 @@
 </section>
 </main>
 
+<div id="modal" class="modal-mask" hidden>
+  <div class="modal">
+    <div class="card-title" data-i18n="modal.title">遥控操作确认（选择—返校—执行）</div>
+    <p id="modalInfo" class="num" style="font-size:16px"></p>
+    <p class="muted" id="modalCheck"></p>
+    <input id="modalReason">
+    <div class="controls" style="margin:0">
+      <button class="btn" id="modalCancel" data-i18n="modal.cancel">取消</button>
+      <button class="btn danger filled" id="modalExec" data-i18n="modal.exec">确认执行</button>
+    </div>
+  </div>
+</div>
 <div id="toasts"></div>
 <script src="/app.js"></script>
 </body>

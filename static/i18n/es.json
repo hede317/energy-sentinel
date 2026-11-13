@@ -113,5 +113,20 @@
   "ws.freq": "Frecuencia",
   "ws.flow": "Caudal",
   "alarm.waterlow": "{device} presión de agua baja {value}MPa (límite {threshold})",
-  "api.token_show": "Mostrar"
+  "api.token_show": "Mostrar",
+  "sb.online": "Equipos en línea",
+  "sb.freq": "Frec. de red",
+  "kpi.totalp": "Potencia activa total",
+  "kpi.today": "Energía de hoy",
+  "kpi.loadrate": "Carga del trafo",
+  "kpi.pf": "FP del sistema",
+  "kpi.imbalance": "Desbalance de fases",
+  "kpi.thd": "THD",
+  "soe.title": "Flujo de eventos SOE",
+  "soe.empty": "Sin eventos",
+  "modal.title": "Confirmación de mando remoto (Selección–Verif–Ejecución)",
+  "modal.reason": "Motivo (opcional)",
+  "modal.exec": "Ejecutar",
+  "modal.cancel": "Cancelar",
+  "modal.returncheck": "Verificación: {action} → {device}"
 }

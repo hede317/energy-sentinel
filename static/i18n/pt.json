@@ -113,5 +113,20 @@
   "ws.freq": "Frequência",
   "ws.flow": "Vazão",
   "alarm.waterlow": "{device} pressão de água baixa {value}MPa (limite {threshold})",
-  "api.token_show": "Mostrar"
+  "api.token_show": "Mostrar",
+  "sb.online": "Equipamentos online",
+  "sb.freq": "Freq. da rede",
+  "kpi.totalp": "Potência ativa total",
+  "kpi.today": "Energia hoje",
+  "kpi.loadrate": "Carga do trafo",
+  "kpi.pf": "FP do sistema",
+  "kpi.imbalance": "Desequilíbrio de fases",
+  "kpi.thd": "THD",
+  "soe.title": "Fluxo de eventos SOE",
+  "soe.empty": "Sem eventos",
+  "modal.title": "Confirmação de comando remoto (Seleção–Verif–Execução)",
+  "modal.reason": "Motivo (opcional)",
+  "modal.exec": "Executar",
+  "modal.cancel": "Cancelar",
+  "modal.returncheck": "Verificação: {action} → {device}"
 }

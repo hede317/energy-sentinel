@@ -113,5 +113,20 @@
   "ws.freq": "Frequency",
   "ws.flow": "Flow",
   "alarm.waterlow": "{device} water pressure low {value}MPa (limit {threshold})",
-  "api.token_show": "Show"
+  "api.token_show": "Show",
+  "sb.online": "Devices Online",
+  "sb.freq": "Grid Freq",
+  "kpi.totalp": "Total Active Power",
+  "kpi.today": "Energy Today",
+  "kpi.loadrate": "Transformer Load",
+  "kpi.pf": "System PF",
+  "kpi.imbalance": "Phase Imbalance",
+  "kpi.thd": "THD",
+  "soe.title": "SOE Live Event Stream",
+  "soe.empty": "No events",
+  "modal.title": "Remote Control Confirm (Select–Verify–Execute)",
+  "modal.reason": "Reason (optional)",
+  "modal.exec": "Execute",
+  "modal.cancel": "Cancel",
+  "modal.returncheck": "Verify: {action} → {device}"
 }

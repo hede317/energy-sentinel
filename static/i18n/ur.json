@@ -113,5 +113,20 @@
   "ws.freq": "فریکوئنسی",
   "ws.flow": "فلو",
   "alarm.waterlow": "{device} پانی کا پریشر کم {value}MPa (حد {threshold})",
-  "api.token_show": "دکھائیں"
+  "api.token_show": "دکھائیں",
+  "sb.online": "آن لائن ڈیوائسز",
+  "sb.freq": "گرڈ فریکوئنسی",
+  "kpi.totalp": "کل ایکٹو پاور",
+  "kpi.today": "آج کی توانائی",
+  "kpi.loadrate": "ٹرانسفارمر لوڈ",
+  "kpi.pf": "سسٹم PF",
+  "kpi.imbalance": "تین فیز عدم توازن",
+  "kpi.thd": "THD",
+  "soe.title": "SOE لائیو ایونٹ اسٹریم",
+  "soe.empty": "کوئی ایونٹ نہیں",
+  "modal.title": "رموٹ کنٹرول تصدیق (انتخاب–تصدیق–عمل)",
+  "modal.reason": "وجہ (اختیاری)",
+  "modal.exec": "عمل کریں",
+  "modal.cancel": "منسوخ",
+  "modal.returncheck": "تصدیق: {action} → {device}"
 }

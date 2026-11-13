@@ -113,5 +113,20 @@
   "ws.freq": "Fréquence",
   "ws.flow": "Débit",
   "alarm.waterlow": "{device} pression d'eau basse {value}MPa (limite {threshold})",
-  "api.token_show": "Afficher"
+  "api.token_show": "Afficher",
+  "sb.online": "Équipements en ligne",
+  "sb.freq": "Fréquence réseau",
+  "kpi.totalp": "Puissance active totale",
+  "kpi.today": "Énergie du jour",
+  "kpi.loadrate": "Charge transfo",
+  "kpi.pf": "FP système",
+  "kpi.imbalance": "Déséquilibre phases",
+  "kpi.thd": "THD",
+  "soe.title": "Flux d'événements SOE",
+  "soe.empty": "Aucun événement",
+  "modal.title": "Confirmation télécommande (Sélection–Vérif–Exécution)",
+  "modal.reason": "Motif (facultatif)",
+  "modal.exec": "Exécuter",
+  "modal.cancel": "Annuler",
+  "modal.returncheck": "Vérification : {action} → {device}"
 }

@@ -113,5 +113,20 @@
   "ws.freq": "频率",
   "ws.flow": "流量",
   "alarm.waterlow": "{device} 供水压力低 {value}MPa（阈值 {threshold}）",
-  "api.token_show": "显示"
+  "api.token_show": "显示",
+  "sb.online": "在线设备",
+  "sb.freq": "电网频率",
+  "kpi.totalp": "总有功功率",
+  "kpi.today": "今日累计电量",
+  "kpi.loadrate": "变压器负载率",
+  "kpi.pf": "系统功率因数",
+  "kpi.imbalance": "三相不平衡度",
+  "kpi.thd": "THD 谐波畸变率",
+  "soe.title": "SOE 实时事件流",
+  "soe.empty": "暂无事件",
+  "modal.title": "遥控操作确认（选择—返校—执行）",
+  "modal.reason": "操作原因（选填）",
+  "modal.exec": "确认执行",
+  "modal.cancel": "取消",
+  "modal.returncheck": "返校核对：{action} → {device}"
 }
