@@ -11,10 +11,11 @@ pub struct Snap {
     pub p: f64,         // kW
     pub q: f64,         // kvar
     pub pf: f64,
-    pub f: f64,         // Hz
+    pub f: f64,         // Hz（供水场景=变频器输出频率）
     pub epi: f64,       // kWh 正向有功电能累计
     pub breaker: bool,  // 遥信：合闸
     pub comm: bool,     // 通信正常
+    pub extra: std::collections::HashMap<String, f64>, // 场景扩展测点（pressure/flow/sp…）
 }
 
 pub struct SimWorld {
@@ -23,12 +24,19 @@ pub struct SimWorld {
     over: std::collections::HashMap<String, (f64, f64)>, // extra_kw, until_elapsed
     comm_bad_until: std::collections::HashMap<String, f64>,
     breaker_open: std::collections::HashSet<String>,
+    // 恒压供水实验台状态
+    w_sp: f64,          // 压力设定 MPa
+    w_freq: f64,        // 变频器频率 Hz
+    w_i: f64,           // PI 积分项
+    w_pv: f64,          // 管网压力（一阶惯性后的显示值）
+    w_demand_pct: f64,  // 用水扰动百分比
+    w_demand_until: Option<f64>,
 }
 
 impl SimWorld {
     pub fn new() -> Self {
         let mut epi = std::collections::HashMap::new();
-        for (id, v) in [("meter-main", 15234.6), ("feeder-ac", 8321.4), ("feeder-im", 6604.0), ("feeder-lt", 3188.2), ("feeder-it", 2105.7)] {
+        for (id, v) in [("meter-main", 15234.6), ("feeder-ac", 8321.4), ("feeder-im", 6604.0), ("feeder-lt", 3188.2), ("feeder-it", 2105.7), ("ws-pump", 512.8)] {
             epi.insert(id.to_string(), v);
         }
         Self {
@@ -37,6 +45,12 @@ impl SimWorld {
             over: Default::default(),
             comm_bad_until: Default::default(),
             breaker_open: Default::default(),
+            w_sp: 0.42,
+            w_freq: 38.0,
+            w_i: 0.25,
+            w_pv: 0.40,
+            w_demand_pct: 0.0,
+            w_demand_until: None,
         }
     }
 
@@ -60,6 +74,49 @@ impl SimWorld {
         self.over.clear();
         self.comm_bad_until.clear();
         self.breaker_open.clear();
+        self.w_demand_pct = 0.0;
+        self.w_demand_until = None;
+    }
+
+    pub fn water_sp(&mut self, sp: f64) {
+        self.w_sp = sp.clamp(0.20, 0.55);
+    }
+    pub fn water_demand(&mut self, pct: f64, secs: f64) {
+        self.w_demand_pct = pct;
+        self.w_demand_until = Some(self.elapsed() + secs);
+    }
+
+    /// 恒压供水闭环：PI 调频 → 泵功率（相似定律 ∝f³）→ 管网压力（一阶惯性）
+    fn water_tick(&mut self, dt: f64, rng: &mut impl Rng, ts: i64) -> Snap {
+        let t = self.elapsed();
+        if let Some(until) = self.w_demand_until {
+            if t >= until {
+                self.w_demand_pct = 0.0;
+                self.w_demand_until = None;
+            }
+        }
+        let demand = 40.0 * (1.0 + self.w_demand_pct) + Self::noise(rng, 2.0); // m³/h
+        // 管网压力静态特性：频率抬压力、用水量拉低压力
+        let pv_target = (self.w_freq / 50.0) * 0.75 - demand * 0.004;
+        self.w_pv += (pv_target - self.w_pv) * 0.12; // 一阶惯性，让曲线有过渡过程
+        let err = self.w_sp - self.w_pv;
+        self.w_i = (self.w_i + err * dt * 0.15).clamp(-30.0, 30.0);
+        self.w_freq = (50.0 * (0.5 + 0.8 * err + self.w_i)).clamp(20.0, 50.0);
+        let power = 7.5 * (self.w_freq / 50.0).powi(3) + Self::noise(rng, 0.15);
+        let flow = 0.9 * demand + self.w_freq / 50.0 * 8.0;
+        let epi = self.epi.entry("ws-pump".into()).or_insert(500.0);
+        *epi += power * dt / 3600.0;
+        let mut extra = std::collections::HashMap::new();
+        extra.insert("pressure".into(), (self.w_pv * 1000.0).round() / 1000.0);
+        extra.insert("flow".into(), (flow * 10.0).round() / 10.0);
+        extra.insert("sp".into(), self.w_sp);
+        Snap {
+            device: "ws-pump".into(), ts, u: 0.0, i: 0.0,
+            p: (power * 10.0).round() / 10.0, q: 0.0, pf: 0.99,
+            f: (self.w_freq * 10.0).round() / 10.0,
+            epi: (*epi * 10.0).round() / 10.0, breaker: true, comm: self.comm_ok("ws-pump", t),
+            extra,
+        }
     }
 
     fn noise(rng: &mut impl Rng, amp: f64) -> f64 { rng.gen_range(-amp..amp) }
@@ -140,7 +197,7 @@ impl SimWorld {
                 device: f.to_string(), ts, u: (u * 10.0).round() / 10.0, i: (i * 10.0).round() / 10.0,
                 p: (p * 10.0).round() / 10.0, q: (q * 10.0).round() / 10.0,
                 pf: (pf * 1000.0).round() / 1000.0, f: ((50.0 + Self::noise(&mut rng, 0.02)) * 10.0).round() / 10.0,
-                epi: epi_val, breaker: brk, comm,
+                epi: epi_val, breaker: brk, comm, extra: Default::default(),
             });
         }
 
@@ -160,7 +217,10 @@ impl SimWorld {
             q: (p_main * (1.0 - pf_main * pf_main).sqrt() / pf_main.max(0.1) * 10.0).round() / 10.0,
             pf: (pf_main * 1000.0).round() / 1000.0, f: ((50.0 + Self::noise(&mut rng, 0.015)) * 10.0).round() / 10.0,
             epi: (*epi * 10.0).round() / 10.0, breaker: !self.breaker_open.contains("meter-main"), comm: self.comm_ok("meter-main", t),
+            extra: Default::default(),
         });
+        // 恒压供水实验台
+        snaps.push(self.water_tick(dt, &mut rng, ts));
         snaps
     }
 

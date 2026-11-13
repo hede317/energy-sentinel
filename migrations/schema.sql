@@ -84,7 +84,8 @@ INSERT INTO devices(id,name,kind,driver,meta) VALUES
  ('feeder-ac','1# 空压机回路','feeder','sim','{"model":"ACREL ADL400","phase":3}'),
  ('feeder-im','2# 注塑机回路','feeder','sim','{"model":"ACREL ADL400","phase":3}'),
  ('feeder-lt','3# 照明与空调回路','feeder','sim','{"model":"ACREL ADL400","phase":3}'),
- ('feeder-it','4# 机房与办公IT回路','feeder','sim','{"model":"ACREL ADL400","phase":3}')
+ ('feeder-it','4# 机房与办公IT回路','feeder','sim','{"model":"ACREL ADL400","phase":3}'),
+ ('ws-pump','恒压供水泵站','feeder','sim','{"scene":"water","plc":"Inovance Easy (planned)"}')
 ON CONFLICT (id) DO NOTHING;
 
 -- 寄存器映射（安科瑞 ADL400 常用点位；接真表时按实际说明书在 metrics 表调整）
@@ -103,16 +104,22 @@ INSERT INTO metrics(device_id,metric,unit,scale,reg_addr,reg_len) VALUES
  ('feeder-lt','epi','kWh',0.1,0x2100,4),
  ('feeder-it','u','V',0.1,0x2000,2),('feeder-it','i','A',0.01,0x2002,2),
  ('feeder-it','p','kW',0.1,0x2012,2),('feeder-it','pf','',0.001,0x2015,2),
- ('feeder-it','epi','kWh',0.1,0x2100,4)
+ ('feeder-it','epi','kWh',0.1,0x2100,4),
+ ('ws-pump','pressure','MPa',1.0,NULL,2),('ws-pump','f','Hz',1.0,NULL,2),
+ ('ws-pump','flow','m3/h',1.0,NULL,2),('ws-pump','p','kW',1.0,NULL,2)
 ON CONFLICT (device_id,metric) DO NOTHING;
 
-INSERT INTO alarm_rules(device_id,metric,op,threshold,duration_s,hysteresis,severity,name_key,name_en) VALUES
- ('feeder-ac','p','gt',58,20,3,'critical','alarm.overload','Air compressor circuit overload'),
- ('feeder-im','p','gt',62,15,3,'critical','alarm.overload','Injection molding circuit overload'),
- ('meter-main','u','gt',400,10,2,'warning','alarm.overvoltage','Inbound overvoltage'),
- ('meter-main','u','lt',360,10,2,'warning','alarm.undervoltage','Inbound undervoltage'),
- ('feeder-im','pf','lt',0.75,60,0.02,'info','alarm.lowpf','Injection molding low power factor')
-ON CONFLICT DO NOTHING;
+-- 规则只在空表时播种（用户删过的规则重启不复活）
+INSERT INTO alarm_rules(device_id,metric,op,threshold,duration_s,hysteresis,severity,name_key,name_en)
+SELECT * FROM (VALUES
+ ('feeder-ac','p','gt',58.0::float8,20,3.0::float8,'critical','alarm.overload','Air compressor circuit overload'),
+ ('feeder-im','p','gt',62.0,15,3.0,'critical','alarm.overload','Injection molding circuit overload'),
+ ('meter-main','u','gt',400.0,10,2.0,'warning','alarm.overvoltage','Inbound overvoltage'),
+ ('meter-main','u','lt',360.0,10,2.0,'warning','alarm.undervoltage','Inbound undervoltage'),
+ ('feeder-im','pf','lt',0.75,60,0.02,'info','alarm.lowpf','Injection molding low power factor'),
+ ('ws-pump','pressure','lt',0.38,5,0.02,'warning','alarm.waterlow','Water supply pressure low')
+) AS seed(device_id,metric,op,threshold,duration_s,hysteresis,severity,name_key,name_en)
+WHERE NOT EXISTS (SELECT 1 FROM alarm_rules);
 
 INSERT INTO settings(k,v) VALUES
  ('webhook_url',''),

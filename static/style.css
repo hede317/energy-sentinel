@@ -123,3 +123,7 @@ code { background: #0a101d; border: 1px solid var(--line); border-radius: 4px; p
 .notes div { padding: 2px 0; border-bottom: 1px dotted #1b2540; }
 [dir="rtl"] .svg-sub, [dir="rtl"] .svg-name, [dir="rtl"] .svg-label, [dir="rtl"] .svg-val { direction: ltr; }
 @media (max-width: 720px) { .title { font-size: 14px; } .subtitle { display: none; } }
+/* 供水实验台 */
+.pipe { stroke: #38bdf8aa; stroke-width: 7; stroke-linecap: round; }
+.cards2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 720px) { .cards2 { grid-template-columns: 1fr; } }

@@ -7,6 +7,7 @@ const CFG = {
   'feeder-im':  { x: 360, color: '#06b6d4', icon: 'im', order: 2 },
   'feeder-lt':  { x: 560, color: '#84cc16', icon: 'lt', order: 3 },
   'feeder-it':  { x: 760, color: '#a78bfa', icon: 'it', order: 4 },
+  'ws-pump':    { color: '#38bdf8', order: 5, water: true },
 };
 const FEEDERS = Object.keys(CFG).filter(k => k !== 'meter-main');
 const ICONS = {
@@ -45,7 +46,11 @@ async function loadLang(l) {
 /* ---------- API ---------- */
 async function api(path, opts = {}) {
   const r = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts });
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || ('HTTP ' + r.status));
+  if (!r.ok) {
+    const msg = (await r.json().catch(() => ({}))).error || ('HTTP ' + r.status);
+    toast(msg, 'warn');
+    throw new Error(msg);
+  }
   return r.json();
 }
 function toast(msg, cls = '') {
@@ -57,6 +62,8 @@ function toast(msg, cls = '') {
 const f1 = v => (v == null ? '--' : (+v).toFixed(1));
 const f2 = v => (v == null ? '--' : (+v).toFixed(2));
 const ftime = ts => new Date(ts).toLocaleTimeString([], { hour12: false });
+const esc = v => String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const devName = (id, name) => I18N['dev.' + id] || esc(name || id);
 const fdate = ts => new Date(ts).toLocaleString([], { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 
 /* ---------- 接线图 ---------- */
@@ -110,20 +117,28 @@ function updateDiagram() {
 /* ---------- 设备卡 ---------- */
 function buildCards() {
   const wrap = document.getElementById('devCards');
-  wrap.innerHTML = Object.keys(CFG).sort((a, b) => CFG[a].order - CFG[b].order).map(id => `
+  wrap.innerHTML = Object.keys(CFG).sort((a, b) => CFG[a].order - CFG[b].order).map(id => {
+    const rows = CFG[id].water
+      ? `<div class="row"><span>MPa</span><span id="c-${id}-pressure">--</span></div>
+         <div class="row"><span>Hz</span><span id="c-${id}-f">--</span></div>
+         <div class="row"><span>m³/h</span><span id="c-${id}-flow">--</span></div>
+         <div class="row"><span>EPi kWh</span><span id="c-${id}-epi">--</span></div>`
+      : `<div class="row"><span>U</span><span id="c-${id}-u">--</span></div>
+         <div class="row"><span>I</span><span id="c-${id}-i">--</span></div>
+         <div class="row"><span>PF</span><span id="c-${id}-pf">--</span></div>
+         <div class="row"><span>EPi kWh</span><span id="c-${id}-epi">--</span></div>`;
+    return `
     <div class="devcard" style="border-top:3px solid ${CFG[id].color}">
       <div class="name"><span>${t('dev.' + id)}</span><span class="dot" id="cdot-${id}"></span></div>
       <div class="p"><span id="c-${id}-p">--</span> <small>kW</small></div>
-      <div class="row"><span>U</span><span id="c-${id}-u">--</span></div>
-      <div class="row"><span>I</span><span id="c-${id}-i">--</span></div>
-      <div class="row"><span>PF</span><span id="c-${id}-pf">--</span></div>
-      <div class="row"><span>EPi kWh</span><span id="c-${id}-epi">--</span></div>
-    </div>`).join('');
+      ${rows}
+    </div>`;
+  }).join('');
 }
 function updateCards() {
   for (const id of Object.keys(CFG)) {
     const st = S.devices[id]; if (!st) continue;
-    ['p', 'u', 'i', 'epi'].forEach(k => { const el = document.getElementById(`c-${id}-${k}`); if (el) el.textContent = f1(st[k]); });
+    ['p', 'u', 'i', 'epi', 'pressure', 'f', 'flow'].forEach(k => { const el = document.getElementById(`c-${id}-${k}`); if (el) el.textContent = f2(st[k]); });
     const pf = document.getElementById(`c-${id}-pf`); if (pf) pf.textContent = f2(st.pf);
     const dot = document.getElementById(`cdot-${id}`); if (dot) dot.classList.toggle('bad', !st._comm);
   }
@@ -146,8 +161,8 @@ function openSSE() {
     const m = JSON.parse(e.data);
     if (m.type === 'tick') {
       S.devices = m.devices; S.counts = m.alarm_counts || S.counts;
-      api('/api/state').then(s => { S.tou_rate = s.tou_rate; S.tariff = s.tariff; S.currency = s.currency; renderTou(); }).catch(() => {});
-      updateDiagram(); updateCards();
+      if (m.tou_rate) S.tou_rate = m.tou_rate;
+      renderTou(); updateDiagram(); updateCards(); updateWater();
     } else if (m.type === 'alarm') {
       const a = m.alarm || {};
       if (m.event === 'triggered') {
@@ -173,14 +188,14 @@ function switchTab(name) {
 }
 function loadTab(name) {
   ({
-    trend: loadTrend, energy: loadEnergy, alarms: loadAlarms,
+    trend: loadTrend, water: loadWaterTrend, energy: loadEnergy, alarms: loadAlarms,
     workorders: loadWos, devices: () => { loadDevices(); loadRules(); }, api: loadSettings,
   }[name] || (() => {}))();
 }
 
 /* ---------- 趋势 ---------- */
 function bindTrendDevs() {
-  document.getElementById('trendDevs').innerHTML = FEEDERS.map(id =>
+  document.getElementById('trendDevs').innerHTML = [...FEEDERS, 'ws-pump'].map(id =>
     `<label><input type="checkbox" value="${id}" ${S.trendSel.has(id) ? 'checked' : ''}> ${t('dev.' + id)}</label>`).join('');
   document.querySelectorAll('#trendDevs input').forEach(cb => cb.onchange = () => {
     cb.checked ? S.trendSel.add(cb.value) : S.trendSel.delete(cb.value);
@@ -197,7 +212,8 @@ async function loadTrend() {
 }
 function drawChart(canvas, series) {
   const dpr = window.devicePixelRatio || 1;
-  const W = canvas.clientWidth || 900, H = +canvas.getAttribute('height');
+  if (!canvas.dataset.h) canvas.dataset.h = canvas.getAttribute('height');
+  const W = canvas.clientWidth || 900, H = +canvas.dataset.h;
   canvas.width = W * dpr; canvas.height = H * dpr;
   const ctx = canvas.getContext('2d'); ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, W, H);
@@ -226,6 +242,29 @@ function drawChart(canvas, series) {
     s.data.forEach((p, i) => i ? ctx.lineTo(px(p[0]), py(p[1])) : ctx.moveTo(px(p[0]), py(p[1])));
     ctx.stroke();
   }
+}
+
+/* ---------- 供水实验台 ---------- */
+function updateWater() {
+  const st = S.devices['ws-pump']; if (!st) return;
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set('wsPressureVal', f2(st.pressure)); set('wsSpVal', 'SP ' + f2(st.sp));
+  set('wsFreqVal', f1(st.f) + ' Hz'); set('wsFlowVal', f1(st.flow)); set('wsPowerVal', f1(st.p));
+  const dot = document.getElementById('wsDot'); if (dot) dot.classList.toggle('bad', !st._comm);
+  const imp = document.getElementById('wsImpeller');
+  if (imp && st.f > 5) imp.setAttribute('transform', `rotate(${(Date.now() / (3000 / st.f * 50)) % 360} 330 205)`);
+  const lvl = document.getElementById('wsTankLevel');
+  if (lvl) { const h = 82 - (st.f - 20) * 1.2; lvl.setAttribute('y', 222 - Math.max(20, Math.min(82, h))); lvl.setAttribute('height', Math.max(20, Math.min(82, h))); }
+}
+async function loadWaterTrend() {
+  const d = await api('/api/history?devices=ws-pump&metric=pressure&hours=1&max=360');
+  drawChart(document.getElementById('wsCanvasP'), [
+    { name: 'MPa', color: '#38bdf8', data: d.series['ws-pump'] || [] },
+  ]);
+  const d2 = await api('/api/history?devices=ws-pump&metric=f&hours=1&max=360');
+  drawChart(document.getElementById('wsCanvasF'), [
+    { name: 'Hz', color: '#f59e0b', data: d2.series['ws-pump'] || [] },
+  ]);
 }
 
 /* ---------- 能耗报表 ---------- */
@@ -257,7 +296,8 @@ async function loadEnergy() {
 }
 function drawStackedBar(canvas, items) {
   const dpr = window.devicePixelRatio || 1;
-  const W = canvas.clientWidth || 900, H = +canvas.getAttribute('height');
+  if (!canvas.dataset.h) canvas.dataset.h = canvas.getAttribute('height');
+  const W = canvas.clientWidth || 900, H = +canvas.dataset.h;
   canvas.width = W * dpr; canvas.height = H * dpr;
   const ctx = canvas.getContext('2d'); ctx.scale(dpr, dpr); ctx.clearRect(0, 0, W, H);
   if (!items.length) return;
@@ -289,8 +329,8 @@ async function loadAlarms() {
     d.alarms.map(a => `<tr>
       <td>${fdate(new Date(a.triggered_at).getTime())}</td>
       <td><span class="sev ${a.severity}">${t('alarm.s' + a.severity)}</span></td>
-      <td>${t('dev.' + a.device_id)}</td>
-      <td>${locMsg(a)}${a.metric !== 'comm' ? ` <b>(${f1(a.value)})</b>` : ''}</td>
+      <td>${esc(devName(a.device_id))}</td>
+      <td>${esc(locMsg(a))}${a.metric !== 'comm' ? ` <b>(${f1(a.value)})</b>` : ''}</td>
       <td><span class="st ${a.status}">${t('alarm.' + a.status)}</span></td>
       <td>${a.status === 'active' ? `<button class="btn sm" onclick="ackAlarm(${a.id})">${t('alarm.ack')}</button> ` : ''}
           ${a.status !== 'closed' ? `<button class="btn sm" onclick="closeAlarm(${a.id})">${t('alarm.close')}</button>
@@ -313,11 +353,11 @@ async function loadWos() {
   host.innerHTML = `<table><tr><th>#</th><th>${t('wo.title')}</th><th>${t('common.status')}</th>
     <th>${t('wo.assignee')}</th><th>${t('wo.created')}</th><th>${t('wo.note')}</th><th></th></tr>` +
     d.workorders.map(w => `<tr>
-      <td>${w.id}</td><td>${w.title}${w.alarm_id ? ` <span class="sev ${w.severity || 'info'}">A#${w.alarm_id}</span>` : ''}</td>
+      <td>${w.id}</td><td>${esc(w.title)}${w.alarm_id ? ` <span class="sev ${w.severity || 'info'}">A#${w.alarm_id}</span>` : ''}</td>
       <td><span class="st ${w.status}">${t('wo.st' + w.status)}</span></td>
-      <td>${w.assignee || '--'}</td>
+      <td>${esc(w.assignee) || '--'}</td>
       <td>${fdate(new Date(w.created_at).getTime())}</td>
-      <td><div class="notes">${(w.notes || []).map(n => `<div>${n.at} ${n.author}: ${n.note}</div>`).join('')}</div>
+      <td><div class="notes">${(w.notes || []).map(n => `<div>${n.at} ${esc(n.author)}: ${esc(n.note)}</div>`).join('')}</div>
         <input id="wn-${w.id}" size="14"> <button class="btn sm" onclick="addNote(${w.id})">${t('wo.addnote')}</button></td>
       <td>${w.status === 'open' ? `<button class="btn sm" onclick="woSt(${w.id},'processing')">${t('wo.set_processing')}</button> ` : ''}
           ${w.status !== 'closed' ? `<button class="btn sm danger" onclick="woSt(${w.id},'closed')">${t('wo.close_wo')}</button>` : ''}</td>
@@ -338,7 +378,7 @@ async function loadDevices() {
     <tr><th>${t('dev.name')}</th><th>Kind</th><th>Driver</th><th>${t('dev.comm')}</th>
     <th>${t('dev.last_ts')}</th><th>P kW</th><th>EPi kWh</th><th>Modbus</th></tr>` +
     d.devices.map(v => `<tr>
-      <td>${t('dev.' + v.id)} <span class="muted">${v.id}</span></td>
+      <td>${devName(v.id, v.name)} <span class="muted">${esc(v.id)}</span></td>
       <td>${v.kind}</td><td><code>${v.driver}</code></td>
       <td><span class="dot ${v.comm ? '' : 'bad'}"></span></td>
       <td>${v.last_ts ? ftime(v.last_ts) : '--'}</td>
@@ -346,7 +386,7 @@ async function loadDevices() {
       <td class="muted">${(v.metrics || []).map(m => `${m.metric}:0x${m.reg ?? '--'}`).join(' ')}</td>
     </tr>`).join('') + '</table>';
   const sel = document.getElementById('ruleDev');
-  sel.innerHTML = d.devices.map(v => `<option value="${v.id}">${t('dev.' + v.id)}</option>`).join('');
+  sel.innerHTML = d.devices.map(v => `<option value="${esc(v.id)}">${devName(v.id, v.name)}</option>`).join('');
 }
 async function loadRules() {
   const d = await api('/api/rules');
@@ -369,7 +409,7 @@ async function delRule(id) { await api(`/api/rules/${id}`, { method: 'DELETE' })
 async function loadSettings() {
   const s = await api('/api/settings');
   document.getElementById('whUrl').value = s.webhook_url || '';
-  document.getElementById('apiToken').textContent = s.api_token;
+  document.getElementById('apiTokenInput').value = localStorage.getItem('es_token') || '';
   document.getElementById('tarPeak').value = s.tou.tariff.peak;
   document.getElementById('tarFlat').value = s.tou.tariff.flat;
   document.getElementById('tarValley').value = s.tou.tariff.valley;
@@ -445,6 +485,9 @@ function bind() {
   document.getElementById('btnOverAc').onclick = () => api('/api/sim/cmd', { method: 'POST', body: JSON.stringify({ action: 'overload', device: 'feeder-ac', kw: 20, secs: 120 }) }).then(() => toast('⚡ +20kW → feeder-ac', 'warn'));
   document.getElementById('btnComm').onclick = () => api('/api/sim/cmd', { method: 'POST', body: JSON.stringify({ action: 'comm_fault', device: 'meter-main', secs: 45 }) }).then(() => toast('📴 comm fault → meter-main', 'warn'));
   document.getElementById('btnClear').onclick = () => api('/api/sim/cmd', { method: 'POST', body: JSON.stringify({ action: 'clear' }) }).then(() => toast('✅ cleared'));
+  document.getElementById('wsApply').onclick = () => api('/api/sim/cmd', { method: 'POST', body: JSON.stringify({ action: 'water_sp', sp: +document.getElementById('wsSpInput').value }) }).then(() => toast('SP → ' + document.getElementById('wsSpInput').value + ' MPa'));
+  document.getElementById('wsDemand').onclick = () => api('/api/sim/cmd', { method: 'POST', body: JSON.stringify({ action: 'water_demand', pct: 1.0, secs: 90 }) }).then(() => toast('🚰 +100% demand 90s', 'warn'));
+  document.getElementById('wsNormal').onclick = () => api('/api/sim/cmd', { method: 'POST', body: JSON.stringify({ action: 'water_demand', pct: 0, secs: 0.1 }) }).then(() => toast('✅'));
   document.getElementById('whSave').onclick = async () => {
     await api('/api/settings', { method: 'POST', body: JSON.stringify({ webhook_url: document.getElementById('whUrl').value.trim() }) });
     toast(t('common.saved'));
@@ -453,9 +496,25 @@ function bind() {
     try { await api('/api/webhook/test', { method: 'POST' }); toast('→ ' + t('api.webhook_test')); }
     catch (e) { toast(e.message, 'warn'); }
   };
+  const tokenHeader = () => ({ 'X-API-Token': document.getElementById('apiTokenInput').value.trim() });
+  document.getElementById('tokenShow').onclick = async () => {
+    try {
+      const d = await fetch('/api/settings/token', { headers: tokenHeader() });
+      if (!d.ok) return toast(t('api.token_bad') || 'invalid token', 'warn');
+      const j = await d.json();
+      document.getElementById('apiTokenInput').type = 'text';
+      document.getElementById('apiTokenInput').value = j.api_token;
+      localStorage.setItem('es_token', j.api_token); loadApiDoc();
+    } catch (e) { toast(String(e), 'warn'); }
+  };
   document.getElementById('tokenRegen').onclick = async () => {
-    const d = await api('/api/settings/token', { method: 'POST' });
-    document.getElementById('apiToken').textContent = d.api_token; loadApiDoc(); toast(t('common.saved'));
+    try {
+      const d = await fetch('/api/settings/token', { method: 'POST', headers: tokenHeader() });
+      if (!d.ok) return toast('invalid token', 'warn');
+      const j = await d.json();
+      document.getElementById('apiTokenInput').value = j.api_token;
+      localStorage.setItem('es_token', j.api_token); loadApiDoc(); toast(t('common.saved'));
+    } catch (e) { toast(String(e), 'warn'); }
   };
   document.getElementById('tarSave').onclick = async () => {
     await api('/api/settings', {
@@ -471,5 +530,7 @@ function bind() {
   bind();
   await loadLang(S.lang);
   openSSE();
+  api('/api/state').then(s => { S.tariff = s.tariff; S.currency = s.currency; }).catch(() => {});
   setInterval(() => { if (curTab === 'trend') loadTrend(); }, 60_000);
+  setInterval(() => { if (curTab === 'water') loadWaterTrend(); }, 30_000);
 })();

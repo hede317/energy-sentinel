@@ -40,7 +40,7 @@ pub fn router(app: SharedApp) -> Router {
         .route("/api/devices", get(api_devices))
         .route("/api/sim/cmd", post(sim_cmd))
         .route("/api/settings", get(settings_get).post(settings_post))
-        .route("/api/settings/token", post(token_regen))
+        .route("/api/settings/token", get(token_show).post(token_regen))
         .route("/api/webhook/test", post(webhook_test))
         .route("/api/v1/open/devices", options(cors_opt).get(open_devices))
         .route("/api/v1/open/latest", options(cors_opt).get(open_latest))
@@ -107,7 +107,7 @@ async fn check_token(app: &SharedApp, headers: &HeaderMap) -> bool {
 }
 
 fn err(msg: &str, code: StatusCode) -> Response {
-    cors((code, Json(json!({"error": msg}))).into_response())
+    (code, Json(json!({"error": msg}))).into_response()
 }
 
 // ---------- SSE ----------
@@ -160,14 +160,14 @@ async fn api_state(State(app): State<SharedApp>) -> Response {
             (id.clone(), Value::Object(m))
         })
         .collect();
-    cors(Json(json!({
+    Json(json!({
         "ts": Utc::now().timestamp_millis(),
         "devices": devices,
         "tou_rate": tou.rate_of(hour),
         "tariff": tou.tariff,
         "currency": tou.currency,
     }))
-    .into_response())
+    .into_response()
 }
 
 async fn api_history(
@@ -201,7 +201,7 @@ async fn api_history(
         }
     }
     drop(c);
-    cors(Json(json!({"metric": metric, "series": series})).into_response())
+    Json(json!({"metric": metric, "series": series})).into_response()
 }
 
 fn downsample(pts: &[(DateTime<Utc>, f64)], maxp: usize) -> Vec<(i64, f64)> {
@@ -260,7 +260,7 @@ async fn api_alarms(
             })
         })
         .collect();
-    cors(Json(json!({"alarms": list})).into_response())
+    Json(json!({"alarms": list})).into_response()
 }
 
 async fn alarm_ack(State(app): State<SharedApp>, Path(id): Path<i32>) -> Response {
@@ -276,7 +276,7 @@ async fn alarm_ack(State(app): State<SharedApp>, Path(id): Path<i32>) -> Respons
     drop(c);
     if r.is_some() {
         let _ = app.tx.send(json!({"type":"alarm","event":"acked","alarm":{"id": id,"status":"acked"}}));
-        cors(Json(json!({"ok": true})).into_response())
+        Json(json!({"ok": true})).into_response()
     } else {
         err("not active", StatusCode::BAD_REQUEST)
     }
@@ -285,7 +285,7 @@ async fn alarm_ack(State(app): State<SharedApp>, Path(id): Path<i32>) -> Respons
 async fn alarm_close(State(app): State<SharedApp>, Path(id): Path<i32>) -> Response {
     let webhook = db::get_setting(&app.db, "webhook_url").await.unwrap_or_default();
     crate::alarm::close_alarm(&app.db, &app.tx, &webhook, id).await;
-    cors(Json(json!({"ok": true})).into_response())
+    Json(json!({"ok": true})).into_response()
 }
 
 // ---------- 规则 ----------
@@ -301,7 +301,7 @@ async fn api_rules(State(app): State<SharedApp>) -> Response {
             })
         })
         .collect();
-    cors(Json(json!({"rules": list})).into_response())
+    Json(json!({"rules": list})).into_response()
 }
 
 async fn rule_create(State(app): State<SharedApp>, Json(b): Json<Value>) -> Response {
@@ -327,7 +327,7 @@ async fn rule_create(State(app): State<SharedApp>, Json(b): Json<Value>) -> Resp
         .is_ok();
     drop(c);
     app.rules_dirty.store(true, std::sync::atomic::Ordering::Relaxed);
-    if ok { cors(Json(json!({"ok": true})).into_response()) } else { err("insert failed", StatusCode::INTERNAL_SERVER_ERROR) }
+    if ok { Json(json!({"ok": true})).into_response() } else { err("insert failed", StatusCode::INTERNAL_SERVER_ERROR) }
 }
 
 async fn rule_toggle(State(app): State<SharedApp>, Path(id): Path<i32>) -> Response {
@@ -338,7 +338,7 @@ async fn rule_toggle(State(app): State<SharedApp>, Path(id): Path<i32>) -> Respo
         .is_ok();
     drop(c);
     app.rules_dirty.store(true, std::sync::atomic::Ordering::Relaxed);
-    if ok { cors(Json(json!({"ok": true})).into_response()) } else { err("failed", StatusCode::BAD_REQUEST) }
+    if ok { Json(json!({"ok": true})).into_response() } else { err("failed", StatusCode::BAD_REQUEST) }
 }
 
 async fn rule_delete(State(app): State<SharedApp>, Path(id): Path<i32>) -> Response {
@@ -346,7 +346,7 @@ async fn rule_delete(State(app): State<SharedApp>, Path(id): Path<i32>) -> Respo
     let ok = c.execute("DELETE FROM alarm_rules WHERE id=$1", &[&id]).await.is_ok();
     drop(c);
     app.rules_dirty.store(true, std::sync::atomic::Ordering::Relaxed);
-    if ok { cors(Json(json!({"ok": true})).into_response()) } else { err("failed", StatusCode::BAD_REQUEST) }
+    if ok { Json(json!({"ok": true})).into_response() } else { err("failed", StatusCode::BAD_REQUEST) }
 }
 
 // ---------- 工单 ----------
@@ -378,7 +378,7 @@ async fn wo_list(State(app): State<SharedApp>) -> Response {
             })
         })
         .collect();
-    cors(Json(json!({"workorders": list})).into_response())
+    Json(json!({"workorders": list})).into_response()
 }
 
 async fn wo_create(State(app): State<SharedApp>, Json(b): Json<Value>) -> Response {
@@ -395,7 +395,7 @@ async fn wo_create(State(app): State<SharedApp>, Json(b): Json<Value>) -> Respon
         .await;
     drop(c);
     match row {
-        Ok(r) => cors(Json(json!({"ok": true, "id": r.get::<_, i32>(0)})).into_response()),
+        Ok(r) => Json(json!({"ok": true, "id": r.get::<_, i32>(0)})).into_response(),
         Err(e) => err(&e.to_string(), StatusCode::INTERNAL_SERVER_ERROR),
     }
 }
@@ -410,7 +410,7 @@ async fn wo_note(State(app): State<SharedApp>, Path(id): Path<i32>, Json(b): Jso
         .await
         .is_ok();
     drop(c);
-    if ok { cors(Json(json!({"ok": true})).into_response()) } else { err("failed", StatusCode::BAD_REQUEST) }
+    if ok { Json(json!({"ok": true})).into_response() } else { err("failed", StatusCode::BAD_REQUEST) }
 }
 
 async fn wo_status(State(app): State<SharedApp>, Path(id): Path<i32>, Json(b): Json<Value>) -> Response {
@@ -436,7 +436,7 @@ async fn wo_status(State(app): State<SharedApp>, Path(id): Path<i32>, Json(b): J
         .is_ok()
     };
     drop(c);
-    if ok { cors(Json(json!({"ok": true})).into_response()) } else { err("failed", StatusCode::BAD_REQUEST) }
+    if ok { Json(json!({"ok": true})).into_response() } else { err("failed", StatusCode::BAD_REQUEST) }
 }
 
 // ---------- 能耗报表 ----------
@@ -505,7 +505,7 @@ async fn report_day(State(app): State<SharedApp>, Query(q): Query<HashMap<String
             "cost": r2(b.peak * tou.price("peak") + b.flat * tou.price("flat") + b.valley * tou.price("valley")),
         }));
     }
-    cors(Json(json!({
+    Json(json!({
         "date": day.format("%Y-%m-%d").to_string(),
         "tariff": tou.tariff, "currency": tou.currency,
         "devices": devices,
@@ -515,19 +515,24 @@ async fn report_day(State(app): State<SharedApp>, Query(q): Query<HashMap<String
             "cost": r2(tot.peak * tou.price("peak") + tot.flat * tou.price("flat") + tot.valley * tou.price("valley")),
         },
     }))
-    .into_response())
+    .into_response()
 }
 
 async fn report_month(State(app): State<SharedApp>, Query(q): Query<HashMap<String, String>>) -> Response {
     let month = q.get("month").cloned().unwrap_or_else(|| Local::now().format("%Y-%m").to_string());
     let (y, m): (i32, u32) = {
         let p: Vec<&str> = month.split('-').collect();
-        (p[0].parse().unwrap_or(2026), p.get(1).and_then(|s| s.parse().ok()).unwrap_or(1))
+        let yy = p[0].parse().unwrap_or(0);
+        let mm = p.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+        if !(2000..=2100).contains(&yy) || !(1..=12).contains(&mm) {
+            return err("bad month (YYYY-MM)", StatusCode::BAD_REQUEST);
+        }
+        (yy, mm)
     };
     let tou = db::get_tou(&app.db).await;
     let devs = device_names(&app).await;
     let mut days = Vec::new();
-    let mut d = Local.with_ymd_and_hms(y, m, 1, 0, 0, 0).unwrap().date_naive();
+    let mut d = Local.with_ymd_and_hms(y, m, 1, 0, 0, 0).single().unwrap_or_else(Local::now).date_naive();
     let today = Local::now().date_naive();
     while d < today {
         let mut total = 0.0;
@@ -540,7 +545,7 @@ async fn report_month(State(app): State<SharedApp>, Query(q): Query<HashMap<Stri
         days.push(json!({"date": d.format("%Y-%m-%d").to_string(), "total_kwh": r2(total), "cost": r2(cost)}));
         d += chrono::Duration::days(1);
     }
-    cors(Json(json!({"month": month, "days": days, "currency": tou.currency})).into_response())
+    Json(json!({"month": month, "days": days, "currency": tou.currency})).into_response()
 }
 
 fn r2(v: f64) -> f64 { (v * 100.0).round() / 100.0 }
@@ -576,7 +581,7 @@ async fn api_devices(State(app): State<SharedApp>) -> Response {
             })
         })
         .collect();
-    cors(Json(json!({"devices": list})).into_response())
+    Json(json!({"devices": list})).into_response()
 }
 
 async fn sim_cmd(State(app): State<SharedApp>, Json(b): Json<Value>) -> Response {
@@ -598,24 +603,31 @@ async fn sim_cmd(State(app): State<SharedApp>, Json(b): Json<Value>) -> Response
             sim.breaker(device, on);
         }
         "clear" => sim.clear(),
+        "water_sp" => {
+            sim.water_sp(b.get("sp").and_then(|v| v.as_f64()).unwrap_or(0.42));
+        }
+        "water_demand" => {
+            let pct = b.get("pct").and_then(|v| v.as_f64()).unwrap_or(1.0);
+            let secs = b.get("secs").and_then(|v| v.as_f64()).unwrap_or(90.0);
+            sim.water_demand(pct, secs);
+        }
         _ => return err("unknown action", StatusCode::BAD_REQUEST),
     }
     drop(sim);
-    cors(Json(json!({"ok": true})).into_response())
+    Json(json!({"ok": true})).into_response()
 }
 
 // ---------- 设置 / webhook ----------
 async fn settings_get(State(app): State<SharedApp>) -> Response {
     let webhook = db::get_setting(&app.db, "webhook_url").await.unwrap_or_default();
-    let token = db::ensure_token(&app.db).await;
-    let tou = db::get_tou(&app.db).await;
+    let tou = crate::collector::tou_cached(&app).await;
     let hour = Local::now().format("%H").to_string().parse::<u32>().unwrap_or(0);
-    cors(Json(json!({
-        "webhook_url": webhook, "api_token": token,
+    Json(json!({
+        "webhook_url": webhook,
         "tou": {"tariff": tou.tariff, "currency": tou.currency, "now_rate": tou.rate_of(hour)},
         "langs": ["zh", "en", "fr", "pt", "es", "ur", "bn"],
     }))
-    .into_response())
+    .into_response()
 }
 
 async fn settings_post(State(app): State<SharedApp>, Json(b): Json<Value>) -> Response {
@@ -630,13 +642,25 @@ async fn settings_post(State(app): State<SharedApp>, Json(b): Json<Value>) -> Re
         let s = serde_json::to_string(&tou).unwrap_or_default();
         db::set_setting(&app.db, "tou", &s).await;
     }
-    cors(Json(json!({"ok": true})).into_response())
+    Json(json!({"ok": true})).into_response()
 }
 
-async fn token_regen(State(app): State<SharedApp>) -> Response {
+/// 查询/重新生成 token：必须已有合法 token（首启 token 在服务日志里）
+async fn token_show(State(app): State<SharedApp>, headers: HeaderMap) -> Response {
+    if !check_token(&app, &headers).await {
+        return err("invalid token", StatusCode::UNAUTHORIZED);
+    }
+    let t = db::ensure_token(&app.db).await;
+    Json(json!({"api_token": t})).into_response()
+}
+
+async fn token_regen(State(app): State<SharedApp>, headers: HeaderMap) -> Response {
+    if !check_token(&app, &headers).await {
+        return err("invalid token", StatusCode::UNAUTHORIZED);
+    }
     let t = db::gen_token();
     db::set_setting(&app.db, "api_token", &t).await;
-    cors(Json(json!({"api_token": t})).into_response())
+    Json(json!({"api_token": t})).into_response()
 }
 
 async fn webhook_test(State(app): State<SharedApp>) -> Response {
@@ -648,7 +672,7 @@ async fn webhook_test(State(app): State<SharedApp>) -> Response {
         &url,
         json!({"event": "webhook.test", "msg": "EnergySentinel webhook is alive", "ts": Utc::now().to_rfc3339()}),
     );
-    cors(Json(json!({"ok": true, "fired": url})).into_response())
+    Json(json!({"ok": true, "fired": url})).into_response()
 }
 
 // ---------- 开放 API ----------
@@ -656,14 +680,14 @@ async fn open_devices(State(app): State<SharedApp>, headers: HeaderMap) -> Respo
     if !check_token(&app, &headers).await {
         return err("invalid token", StatusCode::UNAUTHORIZED);
     }
-    api_devices(State(app)).await
+    cors(api_devices(State(app)).await)
 }
 
 async fn open_latest(State(app): State<SharedApp>, headers: HeaderMap) -> Response {
     if !check_token(&app, &headers).await {
         return err("invalid token", StatusCode::UNAUTHORIZED);
     }
-    api_state(State(app)).await
+    cors(api_state(State(app)).await)
 }
 
 async fn open_history(
@@ -674,7 +698,7 @@ async fn open_history(
     if !check_token(&app, &headers).await {
         return err("invalid token", StatusCode::UNAUTHORIZED);
     }
-    api_history(State(app), Query(q)).await
+    cors(api_history(State(app), Query(q)).await)
 }
 
 async fn open_alarms(
@@ -685,7 +709,7 @@ async fn open_alarms(
     if !check_token(&app, &headers).await {
         return err("invalid token", StatusCode::UNAUTHORIZED);
     }
-    api_alarms(State(app), Query(q)).await
+    cors(api_alarms(State(app), Query(q)).await)
 }
 
 async fn open_ingest(State(app): State<SharedApp>, headers: HeaderMap, Json(b): Json<Value>) -> Response {
@@ -722,7 +746,7 @@ async fn open_ingest(State(app): State<SharedApp>, headers: HeaderMap, Json(b): 
     st.comm = true;
     st.values.insert(metric.to_string(), value);
     drop(lat);
-    cors(Json(json!({"ok": true})).into_response())
+    Json(json!({"ok": true})).into_response()
 }
 
 async fn open_export_csv(

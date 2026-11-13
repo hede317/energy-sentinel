@@ -29,6 +29,7 @@
 
 <nav id="tabs">
   <button data-tab="overview" class="active" data-i18n="nav.overview">总览</button>
+  <button data-tab="water" data-i18n="nav.water">供水实验台</button>
   <button data-tab="trend" data-i18n="nav.trend">趋势</button>
   <button data-tab="energy" data-i18n="nav.energy">能耗报表</button>
   <button data-tab="alarms" data-i18n="nav.alarms">告警</button>
@@ -77,6 +78,59 @@
   <div id="devCards" class="cards"></div>
 </section>
 
+<!-- ===== 供水实验台 ===== -->
+<section id="tab-water" class="tab">
+  <div class="card">
+    <div class="card-title" data-i18n="ws.title">恒压供水闭环（PLC 教学场景）</div>
+    <svg id="wsSvg" viewBox="0 0 920 310" preserveAspectRatio="xMidYMid meet">
+      <!-- 水箱 -->
+      <rect x="40" y="60" width="130" height="170" rx="6" class="meter-box"/>
+      <rect id="wsTankLevel" x="48" y="140" width="114" height="82" rx="3" fill="#1d4ed855"/>
+      <text x="105" y="52" text-anchor="middle" class="svg-label" data-i18n="ws.tank">水箱</text>
+      <!-- 吸水管 -->
+      <line x1="170" y1="205" x2="300" y2="205" class="pipe"/>
+      <!-- 水泵 -->
+      <circle cx="330" cy="205" r="27" class="svg-load"/>
+      <path d="M320 193 L320 217 L344 205 Z" class="svg-load" id="wsImpeller"/>
+      <text x="330" y="258" text-anchor="middle" class="svg-load-tx" data-i18n="ws.pump">水泵</text>
+      <!-- 变频器 -->
+      <rect x="380" y="170" width="96" height="44" rx="5" class="meter-box"/>
+      <text x="428" y="188" text-anchor="middle" class="svg-name" data-i18n="ws.vfd">变频器</text>
+      <text x="428" y="206" text-anchor="middle" class="svg-val" id="wsFreqVal">--</text>
+      <!-- 出水管 -->
+      <line x1="357" y1="205" x2="380" y2="205" class="pipe"/>
+      <line x1="476" y1="205" x2="790" y2="205" class="pipe"/>
+      <!-- 压力传感器 -->
+      <circle cx="600" cy="205" r="16" class="svg-load"/>
+      <text x="600" y="209" text-anchor="middle" class="svg-load-tx" style="font-size:13px">P</text>
+      <text x="600" y="172" text-anchor="middle" class="svg-label" data-i18n="ws.sensor">压力传感器</text>
+      <text x="600" y="140" text-anchor="middle" class="svg-val" style="font-size:24px" id="wsPressureVal">--</text>
+      <text x="600" y="158" text-anchor="middle" class="svg-sub" id="wsSpVal">SP --</text>
+      <!-- 出水 -->
+      <line x1="790" y1="205" x2="850" y2="205" class="pipe"/>
+      <path d="M844 197 L862 205 L844 213 Z" class="svg-load"/>
+      <text x="850" y="185" text-anchor="middle" class="svg-sub"><tspan id="wsFlowVal">--</tspan> m³/h</text>
+      <text x="850" y="232" text-anchor="middle" class="svg-load-tx" data-i18n="ws.outlet">出水</text>
+      <!-- 功率 -->
+      <text x="330" y="130" text-anchor="middle" class="svg-sub"><tspan id="wsPowerVal">--</tspan> kW</text>
+      <circle id="wsDot" cx="330" cy="150" r="5" class="dot"/>
+    </svg>
+  </div>
+  <div class="card demo-bar">
+    <label data-i18n="ws.sp">压力设定</label>
+    <input id="wsSpInput" type="number" step="0.01" min="0.2" max="0.55" value="0.42" style="width:80px">
+    <span>MPa</span>
+    <button class="btn" id="wsApply" data-i18n="ws.apply">应用设定</button>
+    <button class="btn warn" id="wsDemand" data-i18n="ws.demand">模拟用水高峰</button>
+    <button class="btn" id="wsNormal" data-i18n="ws.normal">恢复正常</button>
+    <span class="muted" data-i18n="ws.hint">闭环：压力设定 → 变频器调频 → 泵功率（∝f³）→ 管网压力回读</span>
+  </div>
+  <div class="cards2">
+    <div class="card"><div class="card-title"><span data-i18n="ws.pressure">压力</span> (MPa) · <span data-i18n="ws.flow">流量</span></div><canvas id="wsCanvasP" height="150"></canvas></div>
+    <div class="card"><div class="card-title"><span data-i18n="ws.freq">频率</span> (Hz) · <span data-i18n="dev.ws-pump">泵</span> P (kW)</div><canvas id="wsCanvasF" height="150"></canvas></div>
+  </div>
+</section>
+
 <!-- ===== 趋势 ===== -->
 <section id="tab-trend" class="tab">
   <div class="card">
@@ -85,6 +139,8 @@
       <select id="trendMetric">
         <option value="p">P (kW)</option><option value="u">U (V)</option>
         <option value="i">I (A)</option><option value="pf">PF</option>
+        <option value="pressure">Pressure (MPa)</option><option value="f">Freq (Hz)</option>
+        <option value="flow">Flow (m³/h)</option>
       </select>
       <span id="trendDevs" class="devchecks"></span>
       <span class="spacer"></span>
@@ -170,7 +226,8 @@
   <div class="card">
     <div class="card-title" data-i18n="api.token">开放 API 令牌（X-API-Token）</div>
     <div class="controls">
-      <code id="apiToken">...</code>
+      <input id="apiTokenInput" type="password" size="36" placeholder="token" style="min-width:260px">
+      <button class="btn" id="tokenShow" data-i18n="api.token_show">显示</button>
       <button class="btn" id="tokenRegen" data-i18n="api.token_regen">重新生成</button>
     </div>
     <pre id="apiDoc" class="doc"></pre>

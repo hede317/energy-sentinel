@@ -22,6 +22,7 @@ pub struct App {
     pub latest: RwLock<Latest>,
     pub sim: Mutex<SimWorld>,
     pub rules_dirty: AtomicBool,
+    pub tou_cache: std::sync::Mutex<(i64, crate::db::Tou)>, // (缓存时间戳, TOU配置)
 }
 
 pub type SharedApp = Arc<App>;
@@ -34,7 +35,28 @@ pub fn build_app(db: Db) -> SharedApp {
         latest: RwLock::new(HashMap::new()),
         sim: Mutex::new(SimWorld::new()),
         rules_dirty: AtomicBool::new(false),
+        tou_cache: std::sync::Mutex::new((0, crate::db::Tou {
+            peak: vec![(8, 11), (17, 21)],
+            flat: vec![(11, 13), (21, 23)],
+            valley: vec![(23, 8)],
+            tariff: [("peak", 1.0), ("flat", 0.62), ("valley", 0.32)]
+                .into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+            currency: "CNY".into(),
+        })),
     })
+}
+
+/// TOU 配置带缓存（60s），避免每 tick 打一次 settings 表
+pub async fn tou_cached(app: &SharedApp) -> crate::db::Tou {
+    {
+        let c = app.tou_cache.lock().unwrap();
+        if chrono::Utc::now().timestamp() - c.0 < 60 {
+            return c.1.clone();
+        }
+    }
+    let tou = db::get_tou(&app.db).await;
+    *app.tou_cache.lock().unwrap() = (chrono::Utc::now().timestamp(), tou.clone());
+    tou
 }
 
 /// 主循环：2s 一拍 —— 仿真推进 → 最新值 → 告警评估 → SSE 广播 → 周期落库
@@ -80,6 +102,10 @@ pub async fn run(app: SharedApp) {
                     v.insert("pf".into(), s.pf);
                     v.insert("f".into(), s.f);
                     v.insert("epi".into(), s.epi);
+                    // 场景扩展测点（供水 pressure/flow/sp 等）
+                    for (k, val) in &s.extra {
+                        v.insert(k.clone(), *val);
+                    }
                     // 遥信合闸状态存 values 里，方便规则引用
                     v.insert("breaker".into(), if s.breaker { 1.0 } else { 0.0 });
                 } else {
@@ -109,9 +135,11 @@ pub async fn run(app: SharedApp) {
             })
             .collect();
         let counts = alarm_counts(&app.db).await;
+        let tou = tou_cached(&app).await;
+        let hour = chrono::Local::now().format("%H").to_string().parse::<u32>().unwrap_or(0);
         let _ = app.tx.send(json!({
             "type": "tick", "ts": chrono::Utc::now().timestamp_millis(),
-            "devices": devs, "alarm_counts": counts,
+            "devices": devs, "alarm_counts": counts, "tou_rate": tou.rate_of(hour),
         }));
 
         // 落库：每 10s 一批 p/u/i/pf（总表加 f），每 60s 一次 epi
@@ -151,6 +179,8 @@ async fn persist(app: &SharedApp, latest: &Latest, epi_only: bool) {
             &["epi"]
         } else if dev == "meter-main" {
             &["p", "u", "i", "pf", "f"]
+        } else if dev == "ws-pump" {
+            &["p", "f", "pressure", "flow"]
         } else {
             &["p", "u", "i", "pf"]
         };
