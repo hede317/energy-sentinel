@@ -1,0 +1,28 @@
+[package]
+name = "energy-sentinel"
+version = "0.1.0"
+edition = "2021"
+description = "EnergySentinel 车间配电与能源监控哨兵 —— Rust 单二进制，Modbus 采集 + 告警工单 + 多语言看板"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-serde_json-1"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+rand = "0.8"
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+anyhow = "1"
+
+# 真实硬件日启用：cargo build --release --features rtu
+tokio-modbus = { version = "0.9", optional = true }
+serialport = { version = "4", optional = true }
+
+[features]
+rtu = ["dep:tokio-modbus", "dep:serialport"]
+
+[profile.release]
+opt-level = 2

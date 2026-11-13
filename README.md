@@ -1,0 +1,58 @@
+# EnergySentinel · 车间配电与能源监控哨兵 / Workshop Power & Energy Monitoring Sentinel
+
+Rust 单二进制：**Modbus 采集 → PostgreSQL → 多语言看板 · 告警 · 工单 · 开放 API**。
+当前以仿真电表运行（工厂级负荷曲线：空压机加载/卸载、注塑机周期脉冲、照明日计划、IT 稳载），
+硬件到位后改 `devices.driver='rtu'` 即接真实安科瑞/正泰电表与汇川 PLC，系统与数据链路零改动。
+
+## 运行 / Run
+
+- 服务：`http://127.0.0.1:8018`（launchd 常驻 `com.hedeyou.energy-sentinel`，日志 `/tmp/energy-sentinel.log`）
+- 数据库：Docker `energy-pg` @ **5436**（库 `energy_sentinel`，energy/energy2026）
+- 依赖：Docker Desktop 需运行（energy-pg）；Docker 没开时本服务会自动重试等待
+
+```bash
+# 手动管理
+launchctl kickstart -k gui/$(id -u)/com.hedeyou.energy-sentinel   # 重启
+tail -f /tmp/energy-sentinel.log
+ES_PORT=8018 ES_DB=postgresql://... ./target/release/energy-sentinel  # 自定义
+cargo build --release                # 日常构建
+cargo build --release --features rtu # 硬件日：启用 Modbus RTU 串口驱动
+```
+
+## 功能 / Features
+
+- **总览**：SVG 一次接线图（进线→总表→母排→4 分回路），实时 U/I/P/PF/EPi，通信状态灯、分合闸（点击图上断路器符号）
+- **趋势**：P/U/I/PF 多回路曲线，1h/8h/24h，点击接线图任意回路直达
+- **能耗报表**：日/月报，**峰/平/谷分时电价**分桶计价（费率可在界面改），CSV 导出
+- **告警**：阈值+持续时间+滞回（防抖）+ 通信看门狗（15s 断链告警），状态机 active→acked→closed（自愈自动关闭）
+- **工单**：告警一键转工单，处理记录留痕，闭环时间归档
+- **演示触发器**：模拟注塑机/空压机过载、模拟通信故障——3 分钟讲完 IT+OT 全链的演示剧本
+- **对接**：出站 Webhook（告警即时推送）+ 开放 API（`X-API-Token`）：最新值/历史/告警查询、**第三方数据推送 ingest**、CSV 导出
+- **7 语**：中文/English/Français/Português/Español/اردو(RTL)/বাংলা，右上角切换
+
+## 架构 / Architecture
+
+```
+安科瑞ADL400/正泰DDSU666(RS485) ──USB转485──┐
+汇川 PLC（二期，同一采集层）                 ├→ collector (2s) → PostgreSQL(5436)
+第三方平台 POST /api/v1/open/ingest ────────┘        │
+                                                    ├→ alarm engine（规则在 alarm_rules 表，配置化）
+                                                    ├→ SSE 实时推送
+                                                    └→ axum Web :8018（单页看板，无前端构建链）
+```
+
+- 表：`devices` / `metrics`（**寄存器映射配置化**：地址+缩放系数在表里，换表不改代码）/ `readings`（31 天滚动）/ `alarm_rules` / `alarms` / `work_orders` / `wo_notes` / `settings`
+- 对标产品：FUXA（:8014，组态画面参考）、ThingsPanel（:8016，物模型/告警/工单业务流参考）
+
+## 硬件接入 / Hardware Day
+
+见 `docs/硬件接入-安科瑞正泰与汇川.md`（BOM、接线、寄存器表、driver 切换步骤、安全注意事项）。
+
+## 开放 API 速查
+
+```bash
+TOKEN=$(curl -s localhost:8018/api/settings | jq -r .api_token)
+curl -H "X-API-Token: $TOKEN" localhost:8018/api/v1/open/latest
+curl -X POST -H "X-API-Token: $TOKEN" -H 'Content-Type: application/json' \
+     -d '{"device":"ext-temp-01","metric":"temp","value":26.5}' localhost:8018/api/v1/open/ingest
+```
