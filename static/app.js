@@ -3,25 +3,62 @@
 
 const CFG = {
   'meter-main': { color: '#f43f5e', order: 0 },
-  'feeder-ac':  { x: 160, color: '#f59e0b', icon: 'ac', order: 1 },
-  'feeder-im':  { x: 360, color: '#06b6d4', icon: 'im', order: 2 },
-  'feeder-lt':  { x: 560, color: '#84cc16', icon: 'lt', order: 3 },
-  'feeder-it':  { x: 760, color: '#a78bfa', icon: 'it', order: 4 },
+  'feeder-ac':  { x: 140, color: '#f59e0b', icon: 'ac', rated: 75, order: 1 },
+  'feeder-im':  { x: 353, color: '#06b6d4', icon: 'im', rated: 90, order: 2 },
+  'feeder-lt':  { x: 566, color: '#84cc16', icon: 'lt', rated: 50, order: 3 },
+  'feeder-it':  { x: 780, color: '#a78bfa', icon: 'it', rated: 65, order: 4 },
   'ws-pump':    { color: '#38bdf8', order: 5, water: true },
 };
-const FEEDERS = Object.keys(CFG).filter(k => k !== 'meter-main');
+// 配电一次接线图只画 4 条分回路；供水实验台是独立工艺场景，没有 x/icon，混进来会崩
+const FEEDERS = Object.keys(CFG).filter(k => k !== 'meter-main' && !CFG[k].water);
+const TREND_DEVS = ['meter-main', ...FEEDERS, 'ws-pump'];
+
+/* 精细化工业负载图元（画笔中心 x, y；统一用 .ico 线框样式） */
 const ICONS = {
-  ac: c => `<circle cx="${c}" cy="300" r="17" class="svg-load"/><path d="M${c - 8} 309 L${c + 9} 300 L${c - 8} 291 Z" class="svg-load"/>`,
-  im: c => `<rect x="${c - 18}" y="284" width="36" height="34" rx="3" class="svg-load"/><line x1="${c - 8}" y1="292" x2="${c - 8}" y2="310" class="svg-load"/><line x1="${c + 8}" y1="292" x2="${c + 8}" y2="310" class="svg-load"/>`,
-  lt: c => `<circle cx="${c}" cy="298" r="13" class="svg-load"/><line x1="${c}" y1="285" x2="${c}" y2="279" class="svg-load"/><line x1="${c - 13}" y1="298" x2="${c - 19}" y2="298" class="svg-load"/><line x1="${c + 13}" y1="298" x2="${c + 19}" y2="298" class="svg-load"/>`,
-  it: c => `<rect x="${c - 16}" y="282" width="32" height="40" rx="2" class="svg-load"/><line x1="${c - 8}" y1="292" x2="${c + 8}" y2="292" class="svg-load"/><line x1="${c - 8}" y1="302" x2="${c + 8}" y2="302" class="svg-load"/><line x1="${c - 8}" y1="312" x2="${c + 8}" y2="312" class="svg-load"/>`,
+  // 空压机：卧式储气罐 + 支腿 + 电机风扇叶轮 + 排气立管
+  ac: (x, y) => `
+    <rect x="${x - 40}" y="${y - 8}" width="58" height="26" rx="12" class="ico-fill"/>
+    <path d="M${x - 30} ${y - 8} V${y + 18} M${x + 8} ${y - 8} V${y + 18}" class="ico"/>
+    <path d="M${x - 26} ${y + 18} V${y + 27} M${x + 4} ${y + 18} V${y + 27}" class="ico"/>
+    <rect x="${x + 18}" y="${y - 17}" width="22" height="22" rx="3" class="ico-fill"/>
+    <circle cx="${x + 29}" cy="${y - 6}" r="8" class="ico"/>
+    <path d="M${x + 29} ${y - 14} V${y + 2} M${x + 21} ${y - 6} H${x + 37} M${x + 23} ${y - 12} L${x + 35} ${y} M${x + 35} ${y - 12} L${x + 23} ${y}" class="ico-accent"/>
+    <path d="M${x - 6} ${y - 8} V${y - 24} H${x + 14}" class="ico"/>
+    <path d="M${x + 14} ${y - 28} L${x + 20} ${y - 24} L${x + 14} ${y - 20} Z" class="ico-fill"/>`,
+  // 注塑机：料斗 + 螺杆机筒 + 合模机构 + 机架
+  im: (x, y) => `
+    <path d="M${x - 30} ${y - 24} L${x - 16} ${y - 24} L${x - 20} ${y - 12} L${x - 26} ${y - 12} Z" class="ico-fill"/>
+    <rect x="${x - 24}" y="${y - 12}" width="48" height="16" rx="3" class="ico-fill"/>
+    <path d="M${x - 18} ${y - 4} L${x + 18} ${y - 4} M${x - 18} ${y - 8} L${x + 18} ${y - 8}" class="ico-accent"/>
+    <path d="M${x - 11} ${y - 8} l4 4 l-4 4 l4 4" class="ico-accent"/>
+    <rect x="${x + 24}" y="${y - 14}" width="12" height="20" rx="2" class="ico-fill"/>
+    <path d="M${x - 32} ${y + 4} H${x + 36} M${x - 28} ${y + 4} V${y + 24} M${x + 32} ${y + 4} V${y + 24}" class="ico"/>
+    <path d="M${x - 36} ${y + 24} H${x + 40}" class="ico"/>`,
+  // 照明与空调：发光灯具 + 光晕 + 风机
+  lt: (x, y) => `
+    <path d="M${x - 40} ${y - 20} H${x - 6}" class="ico"/>
+    <path d="M${x - 36} ${y - 20} L${x - 32} ${y - 8} H${x - 14} L${x - 10} ${y - 20} Z" class="ico-fill"/>
+    <path d="M${x - 30} ${y - 4} l-4 8 M${x - 23} ${y - 4} v8 M${x - 16} ${y - 4} l4 8" class="ico-accent"/>
+    <circle cx="${x + 24}" cy="${y}" r="15" class="ico"/>
+    <circle cx="${x + 24}" cy="${y}" r="3" class="ico-fill"/>
+    <path d="M${x + 24} ${y - 12} q9 3 9 12 M${x + 36} ${y} q-3 9 -12 9 M${x + 12} ${y + 12} q-9 -3 -9 -12 M${x + 12} ${y} q3 -9 12 -9" class="ico-accent"/>
+    <path d="M${x + 6} ${y + 22} H${x + 42}" class="ico"/>`,
+  // IT 机房：双层服务器机柜 + 闪烁指示灯
+  it: (x, y) => `
+    <rect x="${x - 26}" y="${y - 28}" width="52" height="54" rx="3" class="ico-fill"/>
+    <path d="M${x - 26} ${y - 10} H${x + 26} M${x - 26} ${y + 8} H${x + 26}" class="ico"/>
+    <path d="M${x - 18} ${y - 22} H${x + 6} M${x - 18} ${y - 4} H${x + 6} M${x - 18} ${y + 14} H${x + 6}" class="ico-accent"/>
+    <circle cx="${x + 17}" cy="${y - 19}" r="2.5" class="led"/>
+    <circle cx="${x + 17}" cy="${y - 1}" r="2.5" class="led led2"/>
+    <circle cx="${x + 17}" cy="${y + 17}" r="2.5" class="led"/>
+    <path d="M${x - 30} ${y + 26} V${y + 30} M${x + 30} ${y + 26} V${y + 30}" class="ico"/>`,
 };
 
 let I18N = {};
 const S = {
   lang: localStorage.getItem('es_lang') || 'zh',
   devices: {}, tou_rate: '', counts: { active: 0, acked: 0 },
-  metric: 'p', hours: 24, trendSel: new Set(FEEDERS),
+  metric: 'p', hours: 1, trendSel: new Set(FEEDERS),
   alarmFilter: 'active', energyView: 'day',
   tariff: {}, currency: 'CNY',
   touSpans: null, hist: [], todayKwh: null, soe: [],
@@ -51,8 +88,8 @@ async function loadLang(l) {
   document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
   document.querySelectorAll('[data-i18n-ph]').forEach(el => { el.placeholder = t(el.dataset.i18nPh); });
   document.getElementById('langSel').value = l;
-  buildFeeders(); buildCards(); bindTrendDevs(); loadApiDoc();
-  renderTou(); updateDiagram(); loadTab(curTab);
+  buildFeeders(); buildCards(); buildKpis(); bindTrendDevs(); loadApiDoc();
+  renderTou(); updateDiagram(); updateCards(); updateKpis(); loadTab(curTab);
 }
 
 /* ---------- API ---------- */
@@ -77,28 +114,55 @@ const ftime = ts => new Date(ts).toLocaleTimeString([], { hour12: false });
 const esc = v => String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const devName = (id, name) => I18N['dev.' + id] || esc(name || id);
 const fdate = ts => new Date(ts).toLocaleString([], { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+const comm = st => st && st._comm !== false;
+const brkOn = st => !st || +st.breaker !== 0;
+/* 内联 SVG 的显隐显式控制（不依赖 hidden 属性，避免个别浏览器不生效） */
+const svgVis = (id, show) => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.removeAttribute('hidden');
+  el.style.display = show ? '' : 'none';
+};
 
-/* ---------- 接线图 ---------- */
+/* ---------- 接线图：0.4kV 一次系统 ---------- */
 function buildFeeders() {
   const g = document.getElementById('g-feeders');
   let svg = '';
   for (const id of FEEDERS) {
     const { x, color, icon } = CFG[id];
     svg += `
-    <line x1="${x}" y1="160" x2="${x}" y2="172" class="wire flow" id="fl-${id}"/>
-    <rect id="brk-${id}" x="${x - 13}" y="172" width="26" height="16" rx="2" class="breaker"/>
-    <line x1="${x}" y1="188" x2="${x}" y2="200" class="wire flow" id="fl2-${id}"/>
-    <g id="mb-${id}" style="cursor:pointer">
-      <rect x="${x - 62}" y="200" width="124" height="56" rx="6" class="meter-box" id="box-${id}"/>
-      <circle id="dot-${id}" cx="${x - 50}" cy="212" r="4" class="dot"/>
-      <text x="${x - 40}" y="217" class="svg-name" id="nm-${id}">${t('dev.' + id)}</text>
-      <text x="${x}" y="240" text-anchor="middle" class="svg-val" fill="${color}" id="v-${id}-p">--</text>
-      <text x="${x - 30}" y="252" text-anchor="middle" class="svg-sub" id="v-${id}-u">-- V</text>
-      <text x="${x + 32}" y="252" text-anchor="middle" class="svg-sub" id="v-${id}-i">-- A</text>
-    </g>
-    <line x1="${x}" y1="256" x2="${x}" y2="282" class="wire"/>
-    ${ICONS[icon](x)}
-    <text x="${x}" y="346" text-anchor="middle" class="svg-load-tx">${t('dev.' + id)}</text>`;
+    <g id="fg-${id}" class="feeder">
+      <!-- 母排引下线 -->
+      <line x1="${x}" y1="234" x2="${x}" y2="252" class="wire flow" id="fl-${id}"/>
+      <!-- 标准刀闸断路器：上/下静触点 + 合闸刀闸 / 分闸斜刀闸 -->
+      <g id="brk-${id}" class="brk" style="cursor:pointer" title="点击遥控分合闸">
+        <circle cx="${x}" cy="252" r="3" class="contact"/>
+        <circle cx="${x}" cy="286" r="3" class="contact"/>
+        <rect x="${x - 20}" y="246" width="40" height="46" fill="transparent"/>
+        <line id="knife-c-${id}" x1="${x}" y1="252" x2="${x}" y2="286" class="knife"/>
+        <line id="knife-o-${id}" x1="${x}" y1="252" x2="${x + 17}" y2="270" class="knife open" style="display:none"/>
+        <text id="brkt-${id}" x="${x + 24}" y="273" class="svg-sub knife-tx">QF合</text>
+      </g>
+      <line x1="${x}" y1="286" x2="${x}" y2="298" class="wire flow" id="fl2-${id}"/>
+      <!-- 智能电表表箱 -->
+      <g id="mb-${id}" style="cursor:pointer">
+        <rect x="${x - 78}" y="298" width="156" height="84" rx="7" class="meter-box" id="box-${id}"/>
+        <circle id="dot-${id}" cx="${x - 66}" cy="312" r="4" class="dot"/>
+        <text x="${x - 56}" y="316" class="svg-name" id="nm-${id}">${t('dev.' + id)}</text>
+        <text x="${x + 70}" y="316" text-anchor="end" class="svg-off" id="off-${id}" style="display:none">OFFLINE</text>
+        <text x="${x}" y="340" text-anchor="middle" class="svg-val num" fill="${color}" id="v-${id}-p">--</text>
+        <text x="${x - 70}" y="355" class="svg-sub">U <tspan class="num" id="v-${id}-u">--</tspan> V</text>
+        <text x="${x + 4}" y="355" class="svg-sub">I <tspan class="num" id="v-${id}-i">--</tspan> A</text>
+        <text x="${x - 70}" y="369" class="svg-sub">PF <tspan class="num" id="v-${id}-pf">--</tspan></text>
+        <text x="${x + 70}" y="369" text-anchor="end" class="svg-load-tx" id="open-${id}" style="display:none">OPEN</text>
+        <rect x="${x - 70}" y="374" width="140" height="4" rx="2" class="loadtrack"/>
+        <rect id="load-${id}" x="${x - 70}" y="374" width="0" height="4" rx="2" fill="#10B981"/>
+      </g>
+      <line x1="${x}" y1="382" x2="${x}" y2="392" class="wire"/>
+      <!-- 精细化工业负载图元 -->
+      ${ICONS[icon](x, 422)}
+      <text x="${x}" y="460" text-anchor="middle" class="svg-load-tx">${t('dev.' + id)}</text>
+    </g>`;
   }
   g.innerHTML = svg;
   for (const id of FEEDERS) {
@@ -106,58 +170,123 @@ function buildFeeders() {
       S.trendSel = new Set([id]); switchTab('trend');
     };
     document.getElementById('brk-' + id).onclick = () => {
-      const on = !(S.devices[id]?.breaker ?? 1);
-      openBreakerModal(id, on);
+      openBreakerModal(id, !brkOn(S.devices[id]));
     };
   }
 }
+
 function updateDiagram() {
   const d = S.devices;
-  const upd = (id, keys) => {
-    const st = d[id]; if (!st) return;
-    keys.forEach(k => { const el = document.getElementById(`v-${id}-${k}`); if (el) el.textContent = k === 'pf' ? f2(st.pf) : (k === 'p' ? f1(st.p) : f1(st[k])); });
-    const dot = document.getElementById('dot-' + id);
-    if (dot) dot.classList.toggle('bad', !st._comm);
-    const brk = document.getElementById('brk-' + id);
-    if (brk) brk.classList.toggle('off', !st.breaker);
+  const put = (id, k, v) => { const el = document.getElementById(`v-${id}-${k}`); if (el) el.textContent = v; };
+  const offline = (id, isOff) => {
+    const box = document.getElementById('box-' + id);
+    if (box) box.classList.toggle('offline', isOff);
+    const fg = document.getElementById('fg-' + id);
+    if (fg) fg.classList.toggle('offline', isOff);
+    svgVis('off-' + id, isOff);
+    const card = document.getElementById('card-' + id);
+    if (card) card.classList.toggle('offline', isOff);
+    const cbadge = document.getElementById('offc-' + id);
+    if (cbadge) cbadge.hidden = !isOff;
   };
-  upd('meter-main', ['p', 'u', 'i', 'pf']);
+
+  // 进线总表综合监控舱
+  const hasMain = !!d['meter-main'];
+  const m = d['meter-main'] || {};
+  const mOff = hasMain && !comm(d['meter-main']);
+  ['p', 'q', 'pf', 'f', 'i', 'load_rate'].forEach(k => {
+    put('meter-main', k, k === 'pf' ? f2(m.pf) : f1(m[k]));
+  });
+  ['ua', 'ub', 'uc'].forEach(k => put('meter-main', k, f1(m[k])));
+  const busU = document.getElementById('v-bus-u');
+  if (busU) busU.textContent = f1(m.u);
+  const qf0 = document.getElementById('qf0Txt');
+  if (qf0) {
+    const on = brkOn(d['meter-main']);
+    qf0.textContent = on ? 'QF0 合 · CLOSED' : 'QF0 分 · OPEN';
+    qf0.style.fill = on ? '#34D399' : '#F87171';
+  }
+  const mvDot = document.getElementById('dot-meter-main');
+  if (mvDot) mvDot.classList.toggle('bad', mOff);
+  const mvBox = document.getElementById('box-meter-main');
+  if (mvBox) mvBox.classList.toggle('offline', mOff);
+  svgVis('off-meter-main', mOff);
+  const lr = Math.max(0, Math.min(100, m.load_rate || 0));
+  const mvBar = document.getElementById('mvLoadBar');
+  if (mvBar) {
+    mvBar.setAttribute('width', (118 * lr / 100).toFixed(1));
+    mvBar.setAttribute('fill', lr > 85 ? '#EF4444' : lr > 70 ? '#F59E0B' : '#10B981');
+  }
+  const nmMain = document.getElementById('nm-meter-main');
+  if (nmMain) nmMain.textContent = t('dev.meter-main');
+
+  // 4 条分回路
   FEEDERS.forEach(id => {
-    upd(id, ['p', 'u', 'i']);
-    const st = S.devices[id];
-    const spd = !st || !st.breaker || !st._comm ? 'slow' : st.p > 40 ? 'fast' : '';
+    const st = d[id] || {};
+    const isOff = !!d[id] && !comm(d[id]);
+    put(id, 'p', f1(st.p)); put(id, 'u', f1(st.u));
+    put(id, 'i', f1(st.i)); put(id, 'pf', f2(st.pf));
+    const dot = document.getElementById('dot-' + id);
+    if (dot) dot.classList.toggle('bad', isOff);
+    offline(id, isOff);
+
+    const on = brkOn(d[id]);
+    svgVis('knife-c-' + id, on);
+    svgVis('knife-o-' + id, !on);
+    const kt = document.getElementById('brkt-' + id);
+    if (kt) { kt.textContent = on ? 'QF合' : 'QF分'; kt.style.fill = on ? '#34D399' : '#F87171'; }
+    svgVis('open-' + id, !on);
+    const box = document.getElementById('box-' + id);
+    if (box) box.classList.toggle('alarm', on && f1(st.p) !== '--' && st.p > CFG[id].rated * 0.9);
+    const fg = document.getElementById('fg-' + id);
+    if (fg) fg.classList.toggle('open', !on);
+
+    const loadPct = Math.max(0, Math.min(100, (st.p || 0) / CFG[id].rated * 100));
+    const bar = document.getElementById('load-' + id);
+    if (bar) {
+      bar.setAttribute('width', (140 * loadPct / 100).toFixed(1));
+      bar.setAttribute('fill', loadPct > 85 ? '#EF4444' : loadPct > 70 ? '#F59E0B' : '#10B981');
+    }
+    // 分闸/离线时停止电流流动动画
+    const spd = !on || isOff || !d[id] ? 'stop' : st.p > 40 ? 'fast' : '';
     ['fl-' + id, 'fl2-' + id].forEach(fid => {
       const el = document.getElementById(fid);
-      if (el) { el.classList.remove('slow', 'fast'); if (spd) el.classList.add(spd); else el.classList.remove('flow'); }
+      if (!el) return;
+      el.classList.remove('slow', 'fast', 'flow');
+      if (spd === 'stop') { el.style.opacity = '.35'; }
+      else { el.style.opacity = '1'; el.classList.add('flow'); if (spd) el.classList.add(spd); }
     });
+    const nm = document.getElementById('nm-' + id);
+    if (nm) nm.textContent = t('dev.' + id);
   });
+
+  // 母排电流动画随总表负载率变速
   const bus = document.querySelector('.busbar');
   if (bus) {
-    const lr = S.devices['meter-main']?.load_rate || 0;
     bus.classList.add('flow');
     bus.classList.remove('slow', 'fast');
     if (lr > 75) bus.classList.add('fast'); else if (lr < 40) bus.classList.add('slow');
+    bus.style.opacity = mOff ? '.35' : '1';
   }
-  document.getElementById('nm-meter-main').textContent = t('dev.meter-main');
 }
 
-/* ---------- 设备卡 ---------- */
+/* ---------- 设备卡（2列×3行紧凑工业矩阵） ---------- */
 function buildCards() {
   const wrap = document.getElementById('devCards');
   wrap.innerHTML = Object.keys(CFG).sort((a, b) => CFG[a].order - CFG[b].order).map(id => {
     const rows = CFG[id].water
-      ? `<div class="row"><span>MPa</span><span id="c-${id}-pressure">--</span></div>
-         <div class="row"><span>Hz</span><span id="c-${id}-f">--</span></div>
-         <div class="row"><span>m³/h</span><span id="c-${id}-flow">--</span></div>
-         <div class="row"><span>EPi kWh</span><span id="c-${id}-epi">--</span></div>`
-      : `<div class="row"><span>U</span><span id="c-${id}-u">--</span></div>
-         <div class="row"><span>I</span><span id="c-${id}-i">--</span></div>
-         <div class="row"><span>PF</span><span id="c-${id}-pf">--</span></div>
-         <div class="row"><span>EPi kWh</span><span id="c-${id}-epi">--</span></div>`;
+      ? `<div class="row"><span>MPa</span><span class="num" id="c-${id}-pressure">--</span></div>
+         <div class="row"><span>Hz</span><span class="num" id="c-${id}-f">--</span></div>
+         <div class="row"><span>m³/h</span><span class="num" id="c-${id}-flow">--</span></div>
+         <div class="row"><span>EPi kWh</span><span class="num" id="c-${id}-epi">--</span></div>`
+      : `<div class="row"><span>U</span><span class="num" id="c-${id}-u">--</span></div>
+         <div class="row"><span>I</span><span class="num" id="c-${id}-i">--</span></div>
+         <div class="row"><span>PF</span><span class="num" id="c-${id}-pf">--</span></div>
+         <div class="row"><span>EPi kWh</span><span class="num" id="c-${id}-epi">--</span></div>`;
     return `
-    <div class="devcard" style="border-top:3px solid ${CFG[id].color}">
-      <div class="name"><span>${t('dev.' + id)}</span><span class="dot" id="cdot-${id}"></span></div>
-      <div class="p"><span id="c-${id}-p">--</span> <small>kW</small></div>
+    <div class="devcard" id="card-${id}" style="border-top:3px solid ${CFG[id].color}">
+      <div class="name"><span>${t('dev.' + id)}</span><span><span class="offbadge" id="offc-${id}" hidden>OFFLINE</span><span class="dot" id="cdot-${id}"></span></span></div>
+      <div class="p num"><span id="c-${id}-p">--</span> <small>kW</small></div>
       ${rows}
     </div>`;
   }).join('');
@@ -165,9 +294,16 @@ function buildCards() {
 function updateCards() {
   for (const id of Object.keys(CFG)) {
     const st = S.devices[id]; if (!st) continue;
-    ['p', 'u', 'i', 'epi', 'pressure', 'f', 'flow'].forEach(k => { const el = document.getElementById(`c-${id}-${k}`); if (el) el.textContent = f2(st[k]); });
+    ['p', 'u', 'i', 'epi', 'pressure', 'f', 'flow'].forEach(k => {
+      const el = document.getElementById(`c-${id}-${k}`); if (el) el.textContent = f2(st[k]);
+    });
     const pf = document.getElementById(`c-${id}-pf`); if (pf) pf.textContent = f2(st.pf);
-    const dot = document.getElementById(`cdot-${id}`); if (dot) dot.classList.toggle('bad', !st._comm);
+    const off = !comm(st);
+    const dot = document.getElementById(`cdot-${id}`); if (dot) dot.classList.toggle('bad', off);
+    const card = document.getElementById('card-' + id);
+    if (card) card.classList.toggle('offline', off);
+    const badge = document.getElementById('offc-' + id);
+    if (badge) badge.hidden = !off;
   }
 }
 
@@ -198,7 +334,7 @@ function openSSE() {
     } else if (m.type === 'alarm') {
       const a = m.alarm || {};
       if (m.event === 'triggered') {
-        toast('🚨 ' + locMsg(a), 'danger');
+        toast('ALARM · ' + locMsg(a), 'danger');
         soePush(a);
         if (curTab === 'alarms') loadAlarms();
       } else {
@@ -232,9 +368,9 @@ function loadTab(name) {
   }[name] || (() => {}))();
 }
 
-/* ---------- 趋势 ---------- */
+/* ---------- 趋势（含进线总表） ---------- */
 function bindTrendDevs() {
-  document.getElementById('trendDevs').innerHTML = [...FEEDERS, 'ws-pump'].map(id =>
+  document.getElementById('trendDevs').innerHTML = TREND_DEVS.map(id =>
     `<label><input type="checkbox" value="${id}" ${S.trendSel.has(id) ? 'checked' : ''}> ${t('dev.' + id)}</label>`).join('');
   document.querySelectorAll('#trendDevs input').forEach(cb => cb.onchange = () => {
     cb.checked ? S.trendSel.add(cb.value) : S.trendSel.delete(cb.value);
@@ -249,6 +385,8 @@ async function loadTrend() {
   document.getElementById('trendLegend').innerHTML = series.map(s =>
     `<span><span class="key" style="background:${s.color}"></span>${s.name}</span>`).join('');
 }
+
+/* 通用折线图：支持双 Y 轴（series[].axis === 'right' 走右轴） */
 function drawChart(canvas, series, opts = {}) {
   const dpr = window.devicePixelRatio || 1;
   if (!canvas.dataset.h) canvas.dataset.h = canvas.getAttribute('height');
@@ -257,23 +395,43 @@ function drawChart(canvas, series, opts = {}) {
   const ctx = canvas.getContext('2d'); ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, W, H);
   const all = series.flatMap(s => s.data);
-  if (!all.length) { ctx.fillStyle = '#94a3b8'; ctx.fillText(t('trend.nodata'), W / 2 - 30, H / 2); return; }
+  if (!all.length) {
+    ctx.fillStyle = '#94a3b8'; ctx.font = '12px sans-serif';
+    ctx.fillText(t('trend.nodata'), W / 2 - 30, H / 2); return;
+  }
   const xs = all.map(p => p[0]);
   const x0 = Math.min(...xs), x1 = Math.max(...xs) || x0 + 1;
-  let y0 = Math.min(...all.map(p => p[1])), y1 = Math.max(...all.map(p => p[1]));
-  const pad = (y1 - y0) * 0.1 || 1; y0 -= pad; y1 += pad;
-  const L = 56, R = 12, T = 12, B = 26;
+  const left = series.filter(s => s.axis !== 'right').flatMap(s => s.data);
+  const right = series.filter(s => s.axis === 'right').flatMap(s => s.data);
+  const rng = arr => {
+    if (!arr.length) return [0, 1];
+    let a = Math.min(...arr.map(p => p[1])), b = Math.max(...arr.map(p => p[1]));
+    const pad = (b - a) * 0.12 || Math.max(Math.abs(a) * 0.1, 0.1);
+    return [a - pad, b + pad];
+  };
+  const [yl0, yl1] = rng(left.length ? left : all);
+  const [yr0, yr1] = rng(right);
+  const hasR = right.length > 0;
+  const L = 56, R = hasR ? 54 : 12, T = 12, B = 26;
   const px = v => L + (v - x0) / (x1 - x0) * (W - L - R);
-  const py = v => H - B - (v - y0) / (y1 - y0) * (H - T - B);
-  ctx.strokeStyle = '#24304d'; ctx.fillStyle = '#94a3b8'; ctx.font = '11px sans-serif'; ctx.lineWidth = 1;
+  const mk = (a, b) => v => H - B - (v - a) / (b - a) * (H - T - B);
+  const pyL = mk(yl0, yl1), pyR = mk(yr0, yr1);
+  const py = (v, s) => s.axis === 'right' ? pyR(v) : pyL(v);
+  const fmt = v => v.toFixed(Math.abs(yl1 - yl0) < 5 ? 2 : 0);
+  ctx.font = '11px ui-monospace, monospace'; ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
-    const v = y0 + (y1 - y0) * i / 4, y = py(v);
-    ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(W - R, y); ctx.stroke();
-    ctx.fillText(v.toFixed(Math.abs(y1 - y0) < 5 ? 2 : 0), 6, y + 4);
+    const vl = yl0 + (yl1 - yl0) * i / 4, y = pyL(vl);
+    ctx.strokeStyle = '#24304d'; ctx.beginPath();
+    ctx.moveTo(L, y); ctx.lineTo(W - R, y); ctx.stroke();
+    ctx.fillStyle = '#94a3b8'; ctx.fillText(fmt(vl), 6, y + 4);
+    if (hasR) {
+      const vr = yr0 + (yr1 - yr0) * i / 4;
+      ctx.fillStyle = '#64748b'; ctx.fillText(fmt(vr), W - R + 6, y + 4);
+    }
   }
   for (let i = 0; i <= 4; i++) {
     const v = x0 + (x1 - x0) * i / 4, x = px(v);
-    ctx.fillText(fdate(v).slice(5), x - 22, H - 8);
+    ctx.fillStyle = '#94a3b8'; ctx.fillText(fdate(v).slice(5), x - 22, H - 8);
   }
   // TOU 峰平谷背景色带
   if (opts.bands && S.touSpans) {
@@ -293,7 +451,7 @@ function drawChart(canvas, series, opts = {}) {
     if (!s.data.length) continue;
     // 渐变填充
     ctx.beginPath();
-    s.data.forEach((p, i) => i ? ctx.lineTo(px(p[0]), py(p[1])) : ctx.moveTo(px(p[0]), py(p[1])));
+    s.data.forEach((p, i) => i ? ctx.lineTo(px(p[0]), py(p[1], s)) : ctx.moveTo(px(p[0]), py(p[1], s)));
     const g = ctx.createLinearGradient(0, T, 0, H - B);
     g.addColorStop(0, hexA(s.color, .22)); g.addColorStop(1, hexA(s.color, 0));
     ctx.save();
@@ -301,18 +459,21 @@ function drawChart(canvas, series, opts = {}) {
     ctx.lineTo(px(s.data[0][0]), H - B);
     ctx.closePath(); ctx.fillStyle = g; ctx.fill();
     ctx.restore();
-    ctx.strokeStyle = s.color; ctx.lineWidth = 1.8; ctx.beginPath();
-    s.data.forEach((p, i) => i ? ctx.lineTo(px(p[0]), py(p[1])) : ctx.moveTo(px(p[0]), py(p[1])));
+    ctx.strokeStyle = s.color; ctx.lineWidth = 1.8;
+    if (s.axis === 'right') ctx.setLineDash([5, 3]);
+    ctx.beginPath();
+    s.data.forEach((p, i) => i ? ctx.lineTo(px(p[0]), py(p[1], s)) : ctx.moveTo(px(p[0]), py(p[1], s)));
     ctx.stroke();
+    ctx.setLineDash([]);
   }
-  // 阈值警戒线 markLine
+  // 阈值警戒线（左轴）
   (opts.thresholds || []).forEach(th => {
-    if (th.v < y0 || th.v > y1) return;
-    const y = py(th.v);
+    if (th.v < yl0 || th.v > yl1) return;
+    const y = pyL(th.v);
     ctx.strokeStyle = th.c; ctx.setLineDash([6, 5]); ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(W - R, y); ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle = th.c; ctx.fillText(String(th.v), W - R - 30, y - 3);
+    ctx.fillStyle = th.c; ctx.fillText(String(th.v), W - R - 32, y - 3);
   });
 }
 function touRateOf(h) {
@@ -323,41 +484,67 @@ function touRateOf(h) {
   return 'valley';
 }
 
-/* ---------- 供水实验台 ---------- */
+/* ---------- 恒压供水实验台 ---------- */
 function updateWater() {
   const st = S.devices['ws-pump']; if (!st) return;
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   set('wsPressureVal', f2(st.pressure)); set('wsSpVal', 'SP ' + f2(st.sp));
   set('wsFreqVal', f1(st.f) + ' Hz'); set('wsFlowVal', f1(st.flow)); set('wsPowerVal', f1(st.p));
-  const dot = document.getElementById('wsDot'); if (dot) dot.classList.toggle('bad', !st._comm);
+  // PI 闭环：SP 设定 / PV 反馈 / Err 偏差
+  set('piSp', f2(st.sp)); set('piPv', f2(st.pressure)); set('piErr', f2((st.sp || 0) - (st.pressure || 0)));
+  // 圆形压力表盘指针（0 ~ 0.6 MPa → -120° ~ +120°）
+  const needle = document.getElementById('wsNeedle');
+  if (needle) {
+    const p = Math.max(0, Math.min(0.6, st.pressure || 0));
+    needle.setAttribute('transform', `rotate(${(-120 + p / 0.6 * 240).toFixed(1)} 760 92)`);
+  }
+  const dot = document.getElementById('wsDot'); if (dot) dot.classList.toggle('bad', !comm(st));
   const imp = document.getElementById('wsImpeller');
   if (imp && st.f > 5) imp.setAttribute('transform', `rotate(${(Date.now() / (3000 / st.f * 50)) % 360} 330 205)`);
   const lvl = document.getElementById('wsTankLevel');
-  if (lvl) { const h = 82 - (st.f - 20) * 1.2; lvl.setAttribute('y', 222 - Math.max(20, Math.min(82, h))); lvl.setAttribute('height', Math.max(20, Math.min(82, h))); }
+  if (lvl) {
+    const h = Math.max(20, Math.min(82, 82 - (st.f - 20) * 1.2));
+    lvl.setAttribute('y', 222 - h); lvl.setAttribute('height', h);
+    const wave = document.getElementById('wsWave');
+    if (wave) wave.setAttribute('d', `M48 ${222 - h} q14 -5 28 0 t28 0 t28 0 t28 0`);
+  }
 }
 async function loadWaterTrend() {
-  const d = await api('/api/history?devices=ws-pump&metric=pressure&hours=1&max=360');
-  drawChart(document.getElementById('wsCanvasP'), [
-    { name: 'MPa', color: '#38bdf8', data: d.series['ws-pump'] || [] },
-  ]);
-  const d2 = await api('/api/history?devices=ws-pump&metric=f&hours=1&max=360');
-  drawChart(document.getElementById('wsCanvasF'), [
-    { name: 'Hz', color: '#f59e0b', data: d2.series['ws-pump'] || [] },
-  ]);
+  // 图1：压力(左轴 MPa) + 流量(右轴 m³/h)；图2：频率(左轴 Hz) + 泵功率(右轴 kW)
+  const q = (metric) => api(`/api/history?devices=ws-pump&metric=${metric}&hours=1&max=360`);
+  const [dp, dflow, df, dpow] = await Promise.all([q('pressure'), q('flow'), q('f'), q('p')]);
+  const sP = [
+    { name: '压力 MPa', color: '#38bdf8', data: dp.series['ws-pump'] || [] },
+    { name: '流量 m³/h', color: '#34d399', axis: 'right', data: dflow.series['ws-pump'] || [] },
+  ];
+  const sF = [
+    { name: '频率 Hz', color: '#f59e0b', data: df.series['ws-pump'] || [] },
+    { name: '泵功率 kW', color: '#f43f5e', axis: 'right', data: dpow.series['ws-pump'] || [] },
+  ];
+  drawChart(document.getElementById('wsCanvasP'), sP, { thresholds: THRESHOLDS.pressure });
+  drawChart(document.getElementById('wsCanvasF'), sF);
+  const legend = (host, arr) => {
+    const el = document.getElementById(host);
+    if (el) el.innerHTML = arr.map(s => `<span><span class="key" style="background:${s.color}"></span>${s.name}${s.axis === 'right' ? ' (右轴)' : ''}</span>`).join('');
+  };
+  legend('wsLegendP', sP); legend('wsLegendF', sF);
 }
 
 /* ---------- 态势栏 / KPI / SOE ---------- */
 function updateStatusbar() {
-  const power = Object.keys(CFG).filter(k => k !== 'ws-pump');
-  const online = power.filter(id => S.devices[id] && S.devices[id]._comm).length;
+  const power = ['meter-main', ...FEEDERS];
+  const online = power.filter(id => S.devices[id] && comm(S.devices[id])).length;
   const el = document.getElementById('sbOnline');
-  if (el) { el.innerHTML = `🟢 ${online}/${power.length}`; el.title = t('sb.online'); }
+  if (el) {
+    el.innerHTML = `<svg width="10" height="10" viewBox="0 0 10 10" style="vertical-align:middle;margin-inline-end:5px"><circle cx="5" cy="5" r="4" fill="${online === power.length ? '#10B981' : '#F59E0B'}"/></svg><b class="num">${online}/${power.length}</b>`;
+    el.title = t('sb.online');
+  }
   const f = document.getElementById('sbFreq');
   if (f && S.devices['meter-main']) f.textContent = f1(S.devices['meter-main'].f) + ' Hz';
 }
 function buildKpis() {
   const wrap = document.getElementById('kpiRow');
-  if (!wrap || wrap.children.length) return;
+  if (!wrap) return;
   const items = [
     ['totalp', 'kpi.totalp', 'kW', true], ['today', 'kpi.today', 'kWh', false],
     ['loadrate', 'kpi.loadrate', '%', false], ['pf', 'kpi.pf', '', false],
@@ -406,7 +593,7 @@ function updateStatusbarSev() {
   const rank = { critical: 3, warning: 2, info: 1 };
   const open = S.soe.filter(x => x.status === 'active' || x.status === 'acked');
   const top = open.sort((x, y) => (rank[y.severity] || 0) - (rank[x.severity] || 0))[0];
-  if (!top) { el.textContent = '✅'; el.className = 'badge sb'; return; }
+  if (!top) { el.textContent = 'NORMAL'; el.className = 'badge sb'; return; }
   el.innerHTML = `<span class="pulse">●</span> ${t('alarm.s' + top.severity)} ×${open.length}`;
   el.className = 'badge sb sev ' + top.severity;
 }
@@ -452,16 +639,16 @@ async function loadEnergy() {
     const rows = d.devices.map(v => `<tr>
       <td>${t('dev.' + v.id, null) || v.name}</td><td>${v.total_kwh}</td><td>${v.peak_kwh}</td>
       <td>${v.flat_kwh}</td><td>${v.valley_kwh}</td><td>${v.cost}</td></tr>`);
-    host.innerHTML = `<table><tr><th>${t('energy.device')}</th><th>kWh ${t('energy.total')}</th>
-      <th>${t('energy.peak')}</th><th>${t('energy.flat')}</th><th>${t('energy.valley')}</th><th>${t('energy.cost')}</th></tr>
+    host.innerHTML = `<table><thead><tr><th>${t('energy.device')}</th><th>kWh ${t('energy.total')}</th>
+      <th>${t('energy.peak')}</th><th>${t('energy.flat')}</th><th>${t('energy.valley')}</th><th>${t('energy.cost')}</th></tr></thead><tbody>
       ${rows.join('')}<tr style="font-weight:700"><td>${t('energy.totals')}</td><td>${d.totals.total_kwh}</td>
-      <td>${d.totals.peak_kwh}</td><td>${d.totals.flat_kwh}</td><td>${d.totals.valley_kwh}</td><td>${d.totals.cost}</td></tr></table>`;
+      <td>${d.totals.peak_kwh}</td><td>${d.totals.flat_kwh}</td><td>${d.totals.valley_kwh}</td><td>${d.totals.cost}</td></tr></tbody></table>`;
     drawStackedBar(canvas, d.devices.map(v => ({ name: t('dev.' + v.id) || v.name, peak: v.peak_kwh, flat: v.flat_kwh, valley: v.valley_kwh })));
   } else {
     const month = date.slice(0, 7);
     const d = await api(`/api/report/month?month=${month}`);
     const rows = d.days.map(v => `<tr><td>${v.date}</td><td>${v.total_kwh}</td><td>${v.cost}</td></tr>`).join('');
-    host.innerHTML = `<table><tr><th>${t('energy.date')}</th><th>kWh</th><th>${t('energy.cost')}</th></tr>${rows}</table>`;
+    host.innerHTML = `<table><thead><tr><th>${t('energy.date')}</th><th>kWh</th><th>${t('energy.cost')}</th></tr></thead><tbody>${rows}</tbody></table>`;
     drawChart(canvas, [{ name: 'kWh', color: '#22d3ee', data: d.days.map(v => [new Date(v.date).getTime(), v.total_kwh]) }]);
   }
 }
@@ -476,7 +663,7 @@ function drawStackedBar(canvas, items) {
   const L = 40, R = 10, T = 10, B = 26;
   const bw = Math.min(90, (W - L - R) / items.length * 0.55);
   const colors = { peak: '#f59e0b', flat: '#60a5fa', valley: '#34d399' };
-  ctx.font = '11px sans-serif'; ctx.fillStyle = '#94a3b8';
+  ctx.font = '11px ui-monospace, monospace'; ctx.fillStyle = '#94a3b8';
   items.forEach((it, i) => {
     const cx = L + (i + 0.5) * (W - L - R) / items.length;
     let y = H - B;
@@ -495,8 +682,8 @@ async function loadAlarms() {
   const d = await api(`/api/alarms?status=${S.alarmFilter}&limit=100`);
   const host = document.getElementById('alarmTable');
   if (!d.alarms.length) { host.innerHTML = `<p class="muted">${t('alarm.empty')}</p>`; return; }
-  host.innerHTML = `<table><tr><th>${t('alarm.triggered_at')}</th><th>${t('alarm.sev')}</th><th>${t('dev.title')}</th>
-    <th>${t('alarm.value')}</th><th>${t('common.status')}</th><th></th></tr>` +
+  host.innerHTML = `<table><thead><tr><th>${t('alarm.triggered_at')}</th><th>${t('alarm.sev')}</th><th>${t('dev.title')}</th>
+    <th>${t('alarm.value')}</th><th>${t('common.status')}</th><th></th></tr></thead><tbody>` +
     d.alarms.map(a => `<tr>
       <td>${fdate(new Date(a.triggered_at).getTime())}</td>
       <td><span class="sev ${a.severity}">${t('alarm.s' + a.severity)}</span></td>
@@ -506,7 +693,7 @@ async function loadAlarms() {
       <td>${a.status === 'active' ? `<button class="btn sm" onclick="ackAlarm(${a.id})">${t('alarm.ack')}</button> ` : ''}
           ${a.status !== 'closed' ? `<button class="btn sm" onclick="closeAlarm(${a.id})">${t('alarm.close')}</button>
           <button class="btn sm" onclick="toWo(${a.id}, ${JSON.stringify(locMsg(a)).replaceAll('"', '&quot;')})">${t('alarm.towo')}</button>` : ''}</td>
-    </tr>`).join('') + '</table>';
+    </tr>`).join('') + '</tbody></table>';
 }
 async function ackAlarm(id) { await api(`/api/alarms/${id}/ack`, { method: 'POST' }); loadAlarms(); }
 async function closeAlarm(id) { await api(`/api/alarms/${id}/close`, { method: 'POST' }); loadAlarms(); }
@@ -521,8 +708,8 @@ async function loadWos() {
   const d = await api('/api/workorders');
   const host = document.getElementById('woTable');
   if (!d.workorders.length) { host.innerHTML = `<p class="muted">${t('wo.empty')}</p>`; return; }
-  host.innerHTML = `<table><tr><th>#</th><th>${t('wo.title')}</th><th>${t('common.status')}</th>
-    <th>${t('wo.assignee')}</th><th>${t('wo.created')}</th><th>${t('wo.note')}</th><th></th></tr>` +
+  host.innerHTML = `<table><thead><tr><th>#</th><th>${t('wo.title')}</th><th>${t('common.status')}</th>
+    <th>${t('wo.assignee')}</th><th>${t('wo.created')}</th><th>${t('wo.note')}</th><th></th></tr></thead><tbody>` +
     d.workorders.map(w => `<tr>
       <td>${w.id}</td><td>${esc(w.title)}${w.alarm_id ? ` <span class="sev ${w.severity || 'info'}">A#${w.alarm_id}</span>` : ''}</td>
       <td><span class="st ${w.status}">${t('wo.st' + w.status)}</span></td>
@@ -532,7 +719,7 @@ async function loadWos() {
         <input id="wn-${w.id}" size="14"> <button class="btn sm" onclick="addNote(${w.id})">${t('wo.addnote')}</button></td>
       <td>${w.status === 'open' ? `<button class="btn sm" onclick="woSt(${w.id},'processing')">${t('wo.set_processing')}</button> ` : ''}
           ${w.status !== 'closed' ? `<button class="btn sm danger" onclick="woSt(${w.id},'closed')">${t('wo.close_wo')}</button>` : ''}</td>
-    </tr>`).join('') + '</table>';
+    </tr>`).join('') + '</tbody></table>';
 }
 async function addNote(id) {
   const el = document.getElementById('wn-' + id);
@@ -545,9 +732,9 @@ async function woSt(id, st) { await api(`/api/workorders/${id}/status`, { method
 /* ---------- 设备与规则 ---------- */
 async function loadDevices() {
   const d = await api('/api/devices');
-  document.getElementById('devTable').innerHTML = `<table>
+  document.getElementById('devTable').innerHTML = `<table><thead>
     <tr><th>${t('dev.name')}</th><th>Kind</th><th>Driver</th><th>${t('dev.comm')}</th>
-    <th>${t('dev.last_ts')}</th><th>P kW</th><th>EPi kWh</th><th>Modbus</th></tr>` +
+    <th>${t('dev.last_ts')}</th><th>P kW</th><th>EPi kWh</th><th>Modbus</th></tr></thead><tbody>` +
     d.devices.map(v => `<tr>
       <td>${devName(v.id, v.name)} <span class="muted">${esc(v.id)}</span></td>
       <td>${v.kind}</td><td><code>${v.driver}</code></td>
@@ -555,23 +742,23 @@ async function loadDevices() {
       <td>${v.last_ts ? ftime(v.last_ts) : '--'}</td>
       <td>${f1(v.p)}</td><td>${f1(v.epi)}</td>
       <td class="muted">${(v.metrics || []).map(m => `${m.metric}:0x${m.reg ?? '--'}`).join(' ')}</td>
-    </tr>`).join('') + '</table>';
+    </tr>`).join('') + '</tbody></table>';
   const sel = document.getElementById('ruleDev');
   sel.innerHTML = d.devices.map(v => `<option value="${esc(v.id)}">${devName(v.id, v.name)}</option>`).join('');
 }
 async function loadRules() {
   const d = await api('/api/rules');
-  document.getElementById('ruleTable').innerHTML = `<table>
+  document.getElementById('ruleTable').innerHTML = `<table><thead>
     <tr><th>#</th><th>${t('dev.name')}</th><th>${t('trend.metric')}</th><th>${t('dev.cond')}</th>
-    <th>${t('dev.duration')}s</th><th>${t('dev.hysteresis')}</th><th>${t('dev.severity')}</th><th></th></tr>` +
+    <th>${t('dev.duration')}s</th><th>${t('dev.hysteresis')}</th><th>${t('dev.severity')}</th><th></th></tr></thead><tbody>` +
     d.rules.map(r => `<tr>
       <td>${r.id}</td><td>${t('dev.' + r.device_id)}</td><td>${r.metric}</td>
       <td>${r.op === 'gt' ? '&gt;' : '&lt;'} ${r.threshold}</td>
       <td>${r.duration_s}</td><td>${r.hysteresis}</td>
       <td><span class="sev ${r.severity}">${r.severity}</span></td>
-      <td><button class="btn sm" onclick="toggleRule(${r.id})">${r.enabled ? '✅' : '⛔'}</button>
+      <td><button class="btn sm" onclick="toggleRule(${r.id})">${r.enabled ? 'ON' : 'OFF'}</button>
       <button class="btn sm danger" onclick="delRule(${r.id})">✕</button></td>
-    </tr>`).join('') + '</table>';
+    </tr>`).join('') + '</tbody></table>';
 }
 async function toggleRule(id) { await api(`/api/rules/${id}/toggle`, { method: 'POST' }); loadRules(); }
 async function delRule(id) { await api(`/api/rules/${id}`, { method: 'DELETE' }); loadRules(); }
@@ -647,18 +834,19 @@ function bind() {
         op: document.getElementById('ruleOp').value,
         threshold: +document.getElementById('ruleThreshold').value,
         duration_s: +document.getElementById('ruleDur').value,
+        hysteresis: +document.getElementById('ruleHyst').value,
         severity: document.getElementById('ruleSev').value,
       }),
     });
     loadRules(); toast(t('common.saved'));
   };
-  document.getElementById('btnOverIm').onclick = () => api('/api/sim/cmd', { method: 'POST', body: JSON.stringify({ action: 'overload', device: 'feeder-im', kw: 40, secs: 120 }) }).then(() => toast('⚡ +40kW → feeder-im', 'warn'));
-  document.getElementById('btnOverAc').onclick = () => api('/api/sim/cmd', { method: 'POST', body: JSON.stringify({ action: 'overload', device: 'feeder-ac', kw: 20, secs: 120 }) }).then(() => toast('⚡ +20kW → feeder-ac', 'warn'));
-  document.getElementById('btnComm').onclick = () => api('/api/sim/cmd', { method: 'POST', body: JSON.stringify({ action: 'comm_fault', device: 'meter-main', secs: 45 }) }).then(() => toast('📴 comm fault → meter-main', 'warn'));
-  document.getElementById('btnClear').onclick = () => api('/api/sim/cmd', { method: 'POST', body: JSON.stringify({ action: 'clear' }) }).then(() => toast('✅ cleared'));
+  document.getElementById('btnOverIm').onclick = () => api('/api/sim/cmd', { method: 'POST', body: JSON.stringify({ action: 'overload', device: 'feeder-im', kw: 40, secs: 120 }) }).then(() => toast('+40kW → feeder-im', 'warn'));
+  document.getElementById('btnOverAc').onclick = () => api('/api/sim/cmd', { method: 'POST', body: JSON.stringify({ action: 'overload', device: 'feeder-ac', kw: 20, secs: 120 }) }).then(() => toast('+20kW → feeder-ac', 'warn'));
+  document.getElementById('btnComm').onclick = () => api('/api/sim/cmd', { method: 'POST', body: JSON.stringify({ action: 'comm_fault', device: 'meter-main', secs: 45 }) }).then(() => toast('comm fault → meter-main', 'warn'));
+  document.getElementById('btnClear').onclick = () => api('/api/sim/cmd', { method: 'POST', body: JSON.stringify({ action: 'clear' }) }).then(() => toast('cleared'));
   document.getElementById('wsApply').onclick = () => api('/api/sim/cmd', { method: 'POST', body: JSON.stringify({ action: 'water_sp', sp: +document.getElementById('wsSpInput').value }) }).then(() => toast('SP → ' + document.getElementById('wsSpInput').value + ' MPa'));
-  document.getElementById('wsDemand').onclick = () => api('/api/sim/cmd', { method: 'POST', body: JSON.stringify({ action: 'water_demand', pct: 1.0, secs: 90 }) }).then(() => toast('🚰 +100% demand 90s', 'warn'));
-  document.getElementById('wsNormal').onclick = () => api('/api/sim/cmd', { method: 'POST', body: JSON.stringify({ action: 'water_demand', pct: 0, secs: 0.1 }) }).then(() => toast('✅'));
+  document.getElementById('wsDemand').onclick = () => api('/api/sim/cmd', { method: 'POST', body: JSON.stringify({ action: 'water_demand', pct: 1.0, secs: 90 }) }).then(() => toast('+100% demand 90s', 'warn'));
+  document.getElementById('wsNormal').onclick = () => api('/api/sim/cmd', { method: 'POST', body: JSON.stringify({ action: 'water_demand', pct: 0, secs: 0.1 }) }).then(() => toast('restored'));
   document.getElementById('whSave').onclick = async () => {
     await api('/api/settings', { method: 'POST', body: JSON.stringify({ webhook_url: document.getElementById('whUrl').value.trim() }) });
     toast(t('common.saved'));
@@ -705,7 +893,6 @@ function bind() {
     S.tariff = s.tariff; S.currency = s.currency;
     S.touSpans = s.tou_spans || null;
   }).catch(() => {});
-  buildKpis();
   fetchToday(); setInterval(fetchToday, 60_000);
   api('/api/alarms?status=all&limit=40').then(d => { S.soe = d.alarms.reverse(); renderSoe(); }).catch(() => {});
   setInterval(() => {
@@ -718,7 +905,7 @@ function bind() {
     api('/api/sim/cmd', {
       method: 'POST',
       body: JSON.stringify({ action: 'breaker', device: MODAL.device, on: MODAL.on, reason: document.getElementById('modalReason').value.trim(), user: 'ops' }),
-    }).then(() => { closeBreakerModal(); toast('✅ ' + t('common.saved')); }).catch(closeBreakerModal);
+    }).then(() => { closeBreakerModal(); toast(t('common.saved')); }).catch(closeBreakerModal);
   };
   setInterval(() => { if (curTab === 'trend') loadTrend(); }, 60_000);
   setInterval(() => { if (curTab === 'water') loadWaterTrend(); }, 30_000);

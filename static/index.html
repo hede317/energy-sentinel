@@ -9,7 +9,7 @@
 <body>
 <header>
   <div class="brand">
-    <span class="logo">⚡</span>
+    <span class="logo"><svg width="26" height="26" viewBox="0 0 26 26" fill="none"><rect x="1" y="1" width="24" height="24" rx="7" fill="#06B6D4" fill-opacity=".12" stroke="#06B6D4" stroke-opacity=".5"/><path d="M14.6 4 7.5 14.2h4.6l-.7 7.8 7.1-10.2h-4.6l.7-7.8Z" fill="#22D3EE"/></svg></span>
     <div>
       <div class="title" data-i18n="app.title">车间配电与能源监控哨兵</div>
       <div class="subtitle" data-i18n="app.subtitle">EnergySentinel · Modbus 采集 → PostgreSQL → 看板 · 告警 · 工单</div>
@@ -21,7 +21,7 @@
     <span id="sbSev" class="badge sb"></span>
     <span id="sbClock" class="badge sb num">--:--:--</span>
     <span id="touBadge" class="badge"></span>
-    <button id="bellBtn" class="bell" title="alarms">🔔<span id="bellCount" class="bell-count" hidden>0</span></button>
+    <button id="bellBtn" class="bell" title="alarms"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2" stroke-linecap="round"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg><span id="bellCount" class="bell-count" hidden>0</span></button>
     <select id="langSel">
       <option value="zh">中文</option><option value="en">English</option>
       <option value="fr">Français</option><option value="pt">Português</option>
@@ -45,45 +45,71 @@
 <main>
 <!-- ===== 总览：一次接线图 + 实时卡 ===== -->
 <section id="tab-overview" class="tab active">
-  <div class="card">
-    <svg id="sld" viewBox="0 0 920 430" preserveAspectRatio="xMidYMid meet">
-      <!-- 电源进线 -->
-      <g class="grid-src">
-        <circle cx="70" cy="70" r="14" fill="none" stroke="#e2e8f0" stroke-width="2"/>
-        <path d="M56 78 L84 62 M56 62 L84 78" stroke="#e2e8f0" stroke-width="2"/>
-        <text x="55" y="106" class="svg-label" data-i18n="ov.grid">电网进线 0.4kV</text>
-      </g>
-      <line x1="84" y1="70" x2="150" y2="70" class="wire"/>
-      <!-- 进线总表 -->
-      <g id="g-main">
-        <rect x="150" y="42" width="150" height="56" rx="6" class="meter-box"/>
-        <circle id="dot-meter-main" cx="162" cy="54" r="4" class="dot"/>
-        <text x="172" y="60" class="svg-name" id="nm-meter-main">进线总表</text>
-        <text x="172" y="86" class="svg-val"><tspan id="v-meter-main-p">--</tspan> kW</text>
-        <text x="310" y="52" class="svg-sub">U: <tspan id="v-meter-main-u">--</tspan> V</text>
-        <text x="310" y="70" class="svg-sub">I: <tspan id="v-meter-main-i">--</tspan> A</text>
-        <text x="310" y="88" class="svg-sub">PF: <tspan id="v-meter-main-pf">--</tspan></text>
-      </g>
-      <line x1="225" y1="98" x2="225" y2="160" class="wire"/>
-      <!-- 母排 -->
-      <line x1="60" y1="160" x2="880" y2="160" class="busbar"/>
-      <text x="62" y="150" class="svg-label" data-i18n="ov.bus">0.4kV 母排</text>
-      <!-- 分回路由 JS 生成 #g-feeders -->
-      <g id="g-feeders"></g>
-    </svg>
-  </div>
-  <div class="card demo-bar">
-    <span class="demo-title" data-i18n="dev.sim.title">演示触发器（仿真注入）：</span>
-    <button class="btn warn" id="btnOverIm" data-i18n="dev.sim.overload">模拟注塑机过载</button>
-    <button class="btn warn" id="btnOverAc" data-i18n="dev.sim.overload_ac">模拟空压机过载</button>
-    <button class="btn warn" id="btnComm" data-i18n="dev.sim.comm_fault">模拟总表通信故障</button>
-    <button class="btn danger" id="btnClear" data-i18n="dev.sim.clear">清除全部</button>
-  </div>
   <div id="kpiRow" class="kpis"></div>
-  <div id="devCards" class="cards"></div>
-  <div class="card glow">
-    <div class="card-title" data-i18n="soe.title">SOE 实时事件流</div>
-    <div id="soeList" class="soe"><p class="muted" data-i18n="soe.empty">暂无事件</p></div>
+  <div class="ov-grid">
+    <div class="ov-left">
+      <div class="card glow">
+        <svg id="sld" viewBox="0 0 920 470" preserveAspectRatio="xMidYMid meet">
+          <defs>
+            <pattern id="gridp" width="23" height="23" patternUnits="userSpaceOnUse">
+              <circle cx="1.5" cy="1.5" r="1" fill="#1E293B"/>
+            </pattern>
+            <linearGradient id="copper" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#e2e8f0"/><stop offset=".5" stop-color="#94a3b8"/><stop offset="1" stop-color="#475569"/>
+            </linearGradient>
+          </defs>
+          <rect width="920" height="470" fill="url(#gridp)" opacity=".55"/>
+          <!-- 变压器 -->
+          <circle cx="460" cy="36" r="15" fill="none" stroke="#94a3b8" stroke-width="2"/>
+          <circle cx="460" cy="50" r="15" fill="none" stroke="#94a3b8" stroke-width="2"/>
+          <text x="486" y="40" class="svg-label">10kV / 0.4kV</text>
+          <text x="486" y="56" class="svg-sub">S11-250kVA · Dyn11</text>
+          <line x1="460" y1="65" x2="460" y2="82" class="wire"/>
+          <rect x="446" y="82" width="28" height="16" rx="2" class="breaker"/>
+          <text x="484" y="95" class="svg-sub" id="qf0Txt">QF0 合</text>
+          <line x1="460" y1="98" x2="460" y2="112" class="wire"/>
+          <!-- 进线总表综合监控舱 -->
+          <g id="g-main">
+            <rect x="280" y="112" width="360" height="98" rx="8" class="meter-box" id="box-meter-main"/>
+            <circle id="dot-meter-main" cx="294" cy="128" r="4" class="dot"/>
+            <text x="306" y="133" class="svg-name" id="nm-meter-main">进线总表</text>
+            <text x="626" y="133" text-anchor="end" class="svg-off" id="off-meter-main" style="display:none">OFFLINE</text>
+            <text x="300" y="158" class="svg-sub">P  <tspan class="num" id="v-meter-main-p">--</tspan> <tspan class="unit">kW</tspan></text>
+            <text x="300" y="177" class="svg-sub">Q  <tspan id="v-meter-main-q">--</tspan> <tspan class="unit">kvar</tspan></text>
+            <text x="300" y="196" class="svg-sub">PF <tspan id="v-meter-main-pf">--</tspan></text>
+            <text x="412" y="158" class="svg-sub">Ua <tspan id="v-meter-main-ua">--</tspan></text>
+            <text x="412" y="177" class="svg-sub">Ub <tspan id="v-meter-main-ub">--</tspan></text>
+            <text x="412" y="196" class="svg-sub">Uc <tspan id="v-meter-main-uc">--</tspan></text>
+            <text x="524" y="158" class="svg-sub">I  <tspan id="v-meter-main-i">--</tspan> <tspan class="unit">A</tspan></text>
+            <text x="524" y="177" class="svg-sub">f  <tspan id="v-meter-main-f">--</tspan> <tspan class="unit">Hz</tspan></text>
+            <text x="622" y="196" text-anchor="end" class="svg-sub">负载率 <tspan class="num" id="v-meter-main-load_rate">--</tspan>%</text>
+            <rect x="524" y="201" width="118" height="5" rx="2.5" fill="#1E293B"/>
+            <rect id="mvLoadBar" x="524" y="201" width="0" height="5" rx="2.5" fill="#10B981"/>
+          </g>
+          <line x1="460" y1="210" x2="460" y2="234" class="wire"/>
+          <!-- 母排 -->
+          <line x1="60" y1="234" x2="880" y2="234" class="busbar"/>
+          <text x="62" y="222" class="svg-label" data-i18n="ov.bus">0.4kV 母排</text>
+          <text x="818" y="222" class="svg-sub">U: <tspan id="v-bus-u">--</tspan> V</text>
+          <!-- 分回路由 JS 生成 #g-feeders -->
+          <g id="g-feeders"></g>
+        </svg>
+      </div>
+      <div class="card demo-bar">
+        <span class="demo-title" data-i18n="dev.sim.title">演示触发器（仿真注入）：</span>
+        <button class="btn warn" id="btnOverIm" data-i18n="dev.sim.overload">模拟注塑机过载</button>
+        <button class="btn warn" id="btnOverAc" data-i18n="dev.sim.overload_ac">模拟空压机过载</button>
+        <button class="btn warn" id="btnComm" data-i18n="dev.sim.comm_fault">模拟总表通信故障</button>
+        <button class="btn danger" id="btnClear" data-i18n="dev.sim.clear">清除全部</button>
+      </div>
+    </div>
+    <div class="ov-right">
+      <div id="devCards" class="cards cards2col"></div>
+      <div class="card glow">
+        <div class="card-title" data-i18n="soe.title">SOE 实时事件流</div>
+        <div id="soeList" class="soe"><p class="muted" data-i18n="soe.empty">暂无事件</p></div>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -91,38 +117,103 @@
 <section id="tab-water" class="tab">
   <div class="card">
     <div class="card-title" data-i18n="ws.title">恒压供水闭环（PLC 教学场景）</div>
-    <svg id="wsSvg" viewBox="0 0 920 310" preserveAspectRatio="xMidYMid meet">
-      <!-- 水箱 -->
-      <rect x="40" y="60" width="130" height="170" rx="6" class="meter-box"/>
-      <rect id="wsTankLevel" x="48" y="140" width="114" height="82" rx="3" fill="#1d4ed855"/>
-      <text x="105" y="52" text-anchor="middle" class="svg-label" data-i18n="ws.tank">水箱</text>
-      <!-- 吸水管 -->
+    <svg id="wsSvg" viewBox="0 0 920 330" preserveAspectRatio="xMidYMid meet">
+      <defs>
+        <linearGradient id="tankWater" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#38bdf8" stop-opacity=".55"/>
+          <stop offset="1" stop-color="#1d4ed8" stop-opacity=".75"/>
+        </linearGradient>
+        <linearGradient id="gaugeRim" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#334155"/><stop offset="1" stop-color="#0f172a"/>
+        </linearGradient>
+      </defs>
+      <!-- ===== 闭环信号回路（虚线，先画在底层） ===== -->
+      <!-- PT 压力变送器 →(4-20mA PV)→ PI 控制器 -->
+      <path d="M600 176 V120 H568 V92" class="sig" id="sig-pv"/>
+      <text x="608" y="128" class="svg-tiny">4–20mA PV</text>
+      <!-- PI 控制器 →(频率指令)→ 变频器 VFD -->
+      <path d="M482 58 H430 V166" class="sig" id="sig-cmd"/>
+      <text x="404" y="52" class="svg-tiny">f* 频率指令</text>
+      <!-- 变频器 → 电机 -->
+      <path d="M428 214 V246 H330 V232" class="sig"/>
+      <text x="366" y="262" class="svg-tiny">VFD → M</text>
+
+      <!-- ===== 储水箱（带刻度与动态液位） ===== -->
+      <rect x="40" y="60" width="130" height="176" rx="6" class="meter-box"/>
+      <rect x="48" y="68" width="114" height="160" rx="3" fill="#0b1220"/>
+      <rect id="wsTankLevel" x="48" y="140" width="114" height="82" rx="3" fill="url(#tankWater)"/>
+      <path id="wsWave" d="M48 140 q14 -5 28 0 t28 0 t28 0 t28 0" fill="none" stroke="#7dd3fc" stroke-width="1.6" opacity=".8"/>
+      <g class="svg-tiny" fill="#64748b">
+        <text x="166" y="72">—</text><text x="166" y="112">—</text>
+        <text x="166" y="152">—</text><text x="166" y="192">—</text><text x="166" y="228">—</text>
+      </g>
+      <text x="105" y="52" text-anchor="middle" class="svg-label" data-i18n="ws.tank">储水箱</text>
+      <text x="105" y="254" text-anchor="middle" class="svg-tiny">TK-101</text>
+
+      <!-- ===== 吸水管 + 离心水泵（叶轮旋转） ===== -->
       <line x1="170" y1="205" x2="300" y2="205" class="pipe"/>
-      <!-- 水泵 -->
-      <circle cx="330" cy="205" r="27" class="svg-load"/>
-      <path d="M320 193 L320 217 L344 205 Z" class="svg-load" id="wsImpeller"/>
-      <text x="330" y="258" text-anchor="middle" class="svg-load-tx" data-i18n="ws.pump">水泵</text>
-      <!-- 变频器 -->
-      <rect x="380" y="170" width="96" height="44" rx="5" class="meter-box"/>
-      <text x="428" y="188" text-anchor="middle" class="svg-name" data-i18n="ws.vfd">变频器</text>
-      <text x="428" y="206" text-anchor="middle" class="svg-val" id="wsFreqVal">--</text>
-      <!-- 出水管 -->
+      <circle cx="330" cy="205" r="30" class="pump-body"/>
+      <circle cx="330" cy="205" r="24" class="pump-inner"/>
+      <g id="wsImpeller">
+        <path d="M330 181 V205 H354 M330 229 V205 H306 M354 205 H330 L318 193 M306 205 H330 L342 217" class="impeller"/>
+        <circle cx="330" cy="205" r="4" class="ico-fill"/>
+      </g>
+      <text x="330" y="258" text-anchor="middle" class="svg-load-tx" data-i18n="ws.pump">离心水泵 P-101</text>
+      <circle id="wsDot" cx="356" cy="182" r="5" class="dot"/>
+      <text x="330" y="128" text-anchor="middle" class="svg-sub">泵 P <tspan class="num" id="wsPowerVal">--</tspan> kW</text>
+
+      <!-- ===== 汇川变频器柜 VFD ===== -->
+      <rect x="380" y="166" width="96" height="76" rx="5" class="meter-box"/>
+      <rect x="388" y="174" width="80" height="30" rx="2" fill="#0b1220"/>
+      <text x="428" y="194" text-anchor="middle" class="svg-val num" style="font-size:15px" id="wsFreqVal">--</text>
+      <text x="428" y="216" text-anchor="middle" class="svg-tiny">VFD · INOVANCE</text>
+      <circle cx="392" cy="232" r="2.5" class="led"/>
+      <circle cx="402" cy="232" r="2.5" class="led led2"/>
+      <text x="428" y="158" text-anchor="middle" class="svg-label" data-i18n="ws.vfd">变频器</text>
+
+      <!-- ===== PI 控制器 ===== -->
+      <g id="g-pi">
+        <rect x="482" y="26" width="170" height="66" rx="6" class="meter-box"/>
+        <text x="567" y="44" text-anchor="middle" class="svg-name">PI 控制器 · PID</text>
+        <line x1="482" y1="50" x2="652" y2="50" class="wire" style="stroke-width:1"/>
+        <text x="494" y="70" class="svg-sub">SP <tspan id="piSp" class="num">--</tspan></text>
+        <text x="560" y="70" class="svg-sub">PV <tspan id="piPv" class="num">--</tspan></text>
+        <text x="620" y="70" class="svg-sub">Err <tspan id="piErr" class="num">--</tspan></text>
+        <text x="567" y="86" text-anchor="middle" class="svg-tiny">恒压闭环调节</text>
+      </g>
+
+      <!-- ===== 出水管网 + 压力变送器 PT + 流量计 ===== -->
       <line x1="357" y1="205" x2="380" y2="205" class="pipe"/>
-      <line x1="476" y1="205" x2="790" y2="205" class="pipe"/>
-      <!-- 压力传感器 -->
-      <circle cx="600" cy="205" r="16" class="svg-load"/>
-      <text x="600" y="209" text-anchor="middle" class="svg-load-tx" style="font-size:13px">P</text>
-      <text x="600" y="172" text-anchor="middle" class="svg-label" data-i18n="ws.sensor">压力传感器</text>
-      <text x="600" y="140" text-anchor="middle" class="svg-val" style="font-size:24px" id="wsPressureVal">--</text>
-      <text x="600" y="158" text-anchor="middle" class="svg-sub" id="wsSpVal">SP --</text>
-      <!-- 出水 -->
-      <line x1="790" y1="205" x2="850" y2="205" class="pipe"/>
-      <path d="M844 197 L862 205 L844 213 Z" class="svg-load"/>
-      <text x="850" y="185" text-anchor="middle" class="svg-sub"><tspan id="wsFlowVal">--</tspan> m³/h</text>
-      <text x="850" y="232" text-anchor="middle" class="svg-load-tx" data-i18n="ws.outlet">出水</text>
-      <!-- 功率 -->
-      <text x="330" y="130" text-anchor="middle" class="svg-sub"><tspan id="wsPowerVal">--</tspan> kW</text>
-      <circle id="wsDot" cx="330" cy="150" r="5" class="dot"/>
+      <line x1="476" y1="205" x2="852" y2="205" class="pipe"/>
+      <circle cx="600" cy="205" r="17" class="svg-load"/>
+      <text x="600" y="209" text-anchor="middle" class="svg-load-tx" style="font-size:13px">PT</text>
+      <text x="600" y="178" text-anchor="middle" class="svg-label" data-i18n="ws.sensor">压力变送器</text>
+      <text x="600" y="146" text-anchor="middle" class="svg-val num" style="font-size:22px" id="wsPressureVal">--</text>
+      <text x="600" y="162" text-anchor="middle" class="svg-sub" id="wsSpVal">SP --</text>
+      <rect x="676" y="188" width="34" height="34" rx="17" class="svg-load"/>
+      <text x="693" y="209" text-anchor="middle" class="svg-tiny">FT</text>
+      <text x="693" y="240" text-anchor="middle" class="svg-sub num"><tspan id="wsFlowVal">--</tspan></text>
+      <text x="693" y="180" text-anchor="middle" class="svg-tiny">流量计</text>
+
+      <!-- ===== 圆形指针压力表（安全区/低压区弧线） ===== -->
+      <g id="g-gauge">
+        <circle cx="760" cy="92" r="54" fill="url(#gaugeRim)" stroke="#475569"/>
+        <circle cx="760" cy="92" r="46" fill="#0b1220"/>
+        <path d="M724 115 A46 46 0 0 1 728 62" fill="none" stroke="#F59E0B" stroke-width="5" stroke-linecap="round"/>
+        <path d="M728 62 A46 46 0 0 1 796 115" fill="none" stroke="#10B981" stroke-width="5" stroke-linecap="round"/>
+        <g class="svg-tiny" fill="#94a3b8" text-anchor="middle">
+          <text x="722" y="120">0</text><text x="760" y="56">0.3</text><text x="800" y="120">0.6</text>
+        </g>
+        <line x1="760" y1="92" x2="760" y2="56" id="wsNeedle" class="needle"/>
+        <circle cx="760" cy="92" r="4" fill="#e2e8f0"/>
+        <text x="760" y="140" text-anchor="middle" class="svg-label">PI-101 · MPa</text>
+      </g>
+
+      <!-- ===== 末端用水阀门 ===== -->
+      <path d="M840 192 L852 205 L840 218 Z" class="svg-load"/>
+      <path d="M866 190 V220 M866 205 H886" class="ico"/>
+      <text x="876" y="236" text-anchor="middle" class="svg-load-tx" data-i18n="ws.outlet">用水阀</text>
+      <text x="90" y="300" class="svg-tiny">恒压供水实验台 · PLC PI 闭环：SP 设定 → VFD 调频 → 泵功率 ∝ f³ → PT 压力回读</text>
     </svg>
   </div>
   <div class="card demo-bar">
@@ -135,8 +226,8 @@
     <span class="muted" data-i18n="ws.hint">闭环：压力设定 → 变频器调频 → 泵功率（∝f³）→ 管网压力回读</span>
   </div>
   <div class="cards2">
-    <div class="card"><div class="card-title"><span data-i18n="ws.pressure">压力</span> (MPa) · <span data-i18n="ws.flow">流量</span></div><canvas id="wsCanvasP" height="150"></canvas></div>
-    <div class="card"><div class="card-title"><span data-i18n="ws.freq">频率</span> (Hz) · <span data-i18n="dev.ws-pump">泵</span> P (kW)</div><canvas id="wsCanvasF" height="150"></canvas></div>
+    <div class="card"><div class="card-title"><span data-i18n="ws.pressure">压力</span> (MPa) · <span data-i18n="ws.flow">流量</span></div><canvas id="wsCanvasP" height="150"></canvas><div id="wsLegendP" class="legend"></div></div>
+    <div class="card"><div class="card-title"><span data-i18n="ws.freq">频率</span> (Hz) · <span data-i18n="dev.ws-pump">泵</span> P (kW)</div><canvas id="wsCanvasF" height="150"></canvas><div id="wsLegendF" class="legend"></div></div>
   </div>
 </section>
 
@@ -212,10 +303,13 @@
       <select id="ruleMetric">
         <option value="p">P kW</option><option value="u">U V</option>
         <option value="i">I A</option><option value="pf">PF</option>
+        <option value="pressure">Pressure MPa</option><option value="flow">Flow m³/h</option>
+        <option value="f">Freq Hz</option>
       </select>
       <select id="ruleOp"><option value="gt">&gt;</option><option value="lt">&lt;</option></select>
       <input id="ruleThreshold" type="number" step="0.1" value="50" size="6">
       <input id="ruleDur" type="number" value="10" size="4" title="duration s">
+      <input id="ruleHyst" type="number" step="0.01" value="0.02" size="4" title="hysteresis">
       <select id="ruleSev"><option value="info">info</option><option value="warning">warning</option><option value="critical">critical</option></select>
       <button class="btn" id="ruleAdd" data-i18n="dev.rules.add">添加规则</button>
     </div>

@@ -206,7 +206,8 @@ impl SimWorld {
         let u_m = u_bus + Self::noise(&mut rng, 0.3);
         let pf_main = if total_p > 1.0 {
             let qs: f64 = snaps.iter().map(|s| s.q).sum::<f64>();
-            ((total_p * total_p + qs * qs).sqrt() / total_p).min(1.0)
+            // PF = P/S = P/√(P²+Q²)（此前分子分母写反导致恒为 1.0）
+            (total_p / (total_p * total_p + qs * qs).sqrt()).clamp(0.1, 1.0)
         } else { 0.99 };
         let i_main = p_main * 1000.0 / (1.732 * u_m * pf_main.max(0.1));
         let epi = self.epi.entry("meter-main".into()).or_insert(0.0);

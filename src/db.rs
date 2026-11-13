@@ -93,6 +93,8 @@ impl Tou {
         else { "valley" }
     }
     pub fn price(&self, rate: &str) -> f64 { *self.tariff.get(rate).unwrap_or(&0.6) }
+    /// 预留给导出/报表的货币符号（当前前端自行按 currency 渲染）
+    #[allow(dead_code)]
     pub fn symbol(&self) -> &'static str { if self.currency == "CNY" { "¥" } else { "$" } }
 }
 

@@ -89,6 +89,9 @@ CREATE TABLE IF NOT EXISTS audit_logs(
 );
 -- 进线总表额定电流（负载率计算口径）
 UPDATE devices SET meta = jsonb_set(meta, '{rated_i}', '400'::jsonb, true) WHERE id='meter-main' AND NOT (meta ? 'rated_i');
+-- 供水实验台不计入配电能耗报表口径
+INSERT INTO devices(id,name,kind,driver) VALUES('ws-pump','恒压供水泵站','water','sim') ON CONFLICT (id) DO NOTHING;
+UPDATE devices SET kind='water' WHERE id='ws-pump' AND kind<>'water';
 
 -- ===== 种子数据（幂等）=====
 INSERT INTO devices(id,name,kind,driver,meta) VALUES
@@ -97,7 +100,7 @@ INSERT INTO devices(id,name,kind,driver,meta) VALUES
  ('feeder-im','2# 注塑机回路','feeder','sim','{"model":"ACREL ADL400","phase":3}'),
  ('feeder-lt','3# 照明与空调回路','feeder','sim','{"model":"ACREL ADL400","phase":3}'),
  ('feeder-it','4# 机房与办公IT回路','feeder','sim','{"model":"ACREL ADL400","phase":3}'),
- ('ws-pump','恒压供水泵站','feeder','sim','{"scene":"water","plc":"Inovance Easy (planned)"}')
+ ('ws-pump','恒压供水泵站','water','sim','{"scene":"water","plc":"Inovance Easy (planned)"}')
 ON CONFLICT (id) DO NOTHING;
 
 -- 寄存器映射（安科瑞 ADL400 常用点位；接真表时按实际说明书在 metrics 表调整）

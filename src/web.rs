@@ -10,7 +10,7 @@ use axum::{
     routing::{delete, get, options, post},
     Json, Router,
 };
-use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Local, NaiveDate, TimeZone, Utc};
 use futures::stream::StreamExt;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -104,7 +104,13 @@ async fn check_token(app: &SharedApp, headers: &HeaderMap) -> bool {
         .get("x-api-token")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    !want.is_empty() && got == want
+    !want.is_empty() && ct_eq(got.as_bytes(), want.as_bytes())
+}
+
+/// 常数时间比较（token 32 位定长，长度差异在此场景可忽略）
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() { return false; }
+    a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 fn err(msg: &str, code: StatusCode) -> Response {
@@ -316,13 +322,19 @@ async fn rule_create(State(app): State<SharedApp>, Json(b): Json<Value>) -> Resp
     };
     let op = b.get("op").and_then(|v| v.as_str()).unwrap_or("gt").to_string();
     let sev = b.get("severity").and_then(|v| v.as_str()).unwrap_or("warning").to_string();
-    let dur: i32 = b.get("duration_s").and_then(|v| v.as_i64()).unwrap_or(10) as i32;
+    let dur: i32 = b.get("duration_s").and_then(|v| v.as_i64()).unwrap_or(10).clamp(0, 3600) as i32;
     let hyst: f64 = b.get("hysteresis").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    if !["gt", "lt"].contains(&op.as_str()) { return err("op must be gt/lt", StatusCode::BAD_REQUEST); }
+    if !["info", "warning", "critical"].contains(&sev.as_str()) { return err("bad severity", StatusCode::BAD_REQUEST); }
     let c = app.db.lock().await;
+    // 同设备+测点+方向已有规则时覆盖更新（避免 uq_rule 唯一索引 500）
     let ok = c
         .execute(
             "INSERT INTO alarm_rules(device_id,metric,op,threshold,duration_s,hysteresis,severity,name_key,name_en) \
-             VALUES($1,$2,$3,$4,$5,$6,$7,'alarm.custom','Custom rule')",
+             VALUES($1,$2,$3,$4,$5,$6,$7,'alarm.custom','Custom rule') \
+             ON CONFLICT (device_id,metric,op) DO UPDATE SET \
+             threshold=EXCLUDED.threshold, duration_s=EXCLUDED.duration_s, \
+             hysteresis=EXCLUDED.hysteresis, severity=EXCLUDED.severity, enabled=TRUE",
             &[&dev, &metric, &op, &th, &dur, &hyst, &sev],
         )
         .await
@@ -447,7 +459,12 @@ struct DayBuckets {
 }
 
 async fn integrate_day(app: &SharedApp, dev: &str, day: NaiveDate) -> DayBuckets {
-    let start = Local.from_local_datetime(&day.and_hms_opt(0, 0, 0).unwrap()).unwrap().with_timezone(&Utc);
+    // 本地日界：DST 切换日 0:00 可能不存在（LocalResult::None），旧代码 .unwrap() 会 panic 打挂请求
+    let naive = day.and_hms_opt(0, 0, 0).unwrap();
+    let start = match Local.from_local_datetime(&naive) {
+        chrono::LocalResult::Single(dt) | chrono::LocalResult::Ambiguous(dt, _) => dt.with_timezone(&Utc),
+        chrono::LocalResult::None => Utc.from_utc_datetime(&naive),
+    };
     let end = start + chrono::Duration::days(1);
     let tou = db::get_tou(&app.db).await;
     let c = app.db.lock().await;
@@ -483,7 +500,7 @@ async fn integrate_day(app: &SharedApp, dev: &str, day: NaiveDate) -> DayBuckets
 async fn device_names(app: &SharedApp) -> Vec<(String, String)> {
     let c = app.db.lock().await;
     let rows = c
-        .query("SELECT id,name FROM devices WHERE kind!='inbound' ORDER BY id", &[])
+        .query("SELECT id,name FROM devices WHERE kind='feeder' ORDER BY id", &[])
         .await
         .unwrap_or_default();
     drop(c);
@@ -531,18 +548,62 @@ async fn report_month(State(app): State<SharedApp>, Query(q): Query<HashMap<Stri
         }
         (yy, mm)
     };
-    let tou = db::get_tou(&app.db).await;
+    let tou = crate::collector::tou_cached(&app).await;
     let devs = device_names(&app).await;
+    // 统一日界转换：DST 歧义/缺口时取最早候选，绝不退化成「现在」
+    let day_start = |yy: i32, mm: u32, dd: u32| -> DateTime<Utc> {
+        let naive = chrono::NaiveDate::from_ymd_opt(yy, mm, dd)
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .unwrap_or_else(|| Utc::now().naive_utc());
+        match Local.from_local_datetime(&naive) {
+            chrono::LocalResult::Single(dt) => dt.with_timezone(&Utc),
+            chrono::LocalResult::Ambiguous(a, b) => a.min(b).with_timezone(&Utc),
+            chrono::LocalResult::None => Utc.from_utc_datetime(&naive),
+        }
+    };
+    let start = day_start(y, m, 1);
+    let end = if m == 12 { day_start(y + 1, 1, 1) } else { day_start(y, m + 1, 1) };
+    let now_cap = Utc::now().min(end);
+    // 单次 SQL 拉整月 p 序列，内存按日积分（替代原 31天×设备 N+1 查询）
+    let c = app.db.lock().await;
+    let rows = c
+        .query(
+            "SELECT device_id,ts,value FROM readings WHERE metric='p' AND ts>=$1 AND ts<$2 ORDER BY ts",
+            &[&start, &now_cap],
+        )
+        .await
+        .unwrap_or_default();
+    drop(c);
+    let feeders: std::collections::HashSet<String> = devs.iter().map(|(id, _)| id.clone()).collect();
+    let mut acc: std::collections::HashMap<(String, NaiveDate), [f64; 3]> = Default::default(); // [peak, flat, valley]
+    let mut prev: std::collections::HashMap<String, (DateTime<Utc>, f64)> = Default::default();
+    for r in rows {
+        let dev: String = r.get(0);
+        if !feeders.contains(&dev) { continue; }
+        let ts: DateTime<Utc> = r.get(1);
+        let v: f64 = r.get(2);
+        if let Some((pt, pv)) = prev.get(&dev) {
+            let gap = (ts - *pt).num_seconds().clamp(0, 60) as f64;
+            let kwh = pv * gap / 3600.0;
+            let h = ts.with_timezone(&Local).format("%H").to_string().parse::<u32>().unwrap_or(0);
+            let day = ts.with_timezone(&Local).date_naive();
+            let slot = match tou.rate_of(h) { "peak" => 0, "flat" => 1, _ => 2 };
+            let cell = acc.entry((dev.clone(), day)).or_insert([0.0, 0.0, 0.0]);
+            cell[slot] += kwh;
+        }
+        prev.insert(dev, (ts, v));
+    }
     let mut days = Vec::new();
-    let mut d = Local.with_ymd_and_hms(y, m, 1, 0, 0, 0).single().unwrap_or_else(Local::now).date_naive();
+    let mut d = start.with_timezone(&Local).date_naive();
     let today = Local::now().date_naive();
-    while d < today {
+    while d <= today && d.month() == m {
         let mut total = 0.0;
         let mut cost = 0.0;
         for (id, _) in &devs {
-            let b = integrate_day(&app, id, d).await;
-            total += b.total;
-            cost += b.peak * tou.price("peak") + b.flat * tou.price("flat") + b.valley * tou.price("valley");
+            if let Some([pk, fl, vl]) = acc.get(&(id.clone(), d)) {
+                total += pk + fl + vl;
+                cost += pk * tou.price("peak") + fl * tou.price("flat") + vl * tou.price("valley");
+            }
         }
         days.push(json!({"date": d.format("%Y-%m-%d").to_string(), "total_kwh": r2(total), "cost": r2(cost)}));
         d += chrono::Duration::days(1);
@@ -688,6 +749,12 @@ async fn settings_get(State(app): State<SharedApp>) -> Response {
 
 async fn settings_post(State(app): State<SharedApp>, Json(b): Json<Value>) -> Response {
     if let Some(u) = b.get("webhook_url").and_then(|v| v.as_str()) {
+        let u = u.trim();
+        let private = ["localhost", "127.0.0.1", "0.0.0.0", "169.254.", "metadata", "//10.", "//192.168.", "//172."];
+        let bad = (!u.is_empty() && !u.starts_with("https://" ) && !u.starts_with("http://"))
+            || u.len() > 500
+            || private.iter().any(|s| u.contains(s));
+        if bad { return err("webhook_url not allowed (public http/https only)", StatusCode::BAD_REQUEST); }
         db::set_setting(&app.db, "webhook_url", u).await;
     }
     if b.get("tariff").is_some() {

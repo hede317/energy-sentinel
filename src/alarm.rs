@@ -26,6 +26,8 @@ pub struct Engine {
     fired: std::collections::HashMap<i32, i32>,     // rule_id -> 活跃 alarm id
     comm_fired: std::collections::HashMap<String, i32>,
     pub last_reload: i64,
+    initialized: bool, // 首拍时从库里恢复未关闭告警，防重启重复触发
+    last_sync: i64,    // 上次校验「内存活跃告警是否仍活跃」的时间（节流）
 }
 
 pub async fn load_rules(db: &Db) -> Vec<Rule> {
@@ -58,7 +60,7 @@ pub async fn load_rules(db: &Db) -> Vec<Rule> {
 
 impl Engine {
     pub fn new() -> Self {
-        Self { rules: vec![], pending: Default::default(), fired: Default::default(), comm_fired: Default::default(), last_reload: 0 }
+        Self { rules: vec![], pending: Default::default(), fired: Default::default(), comm_fired: Default::default(), last_reload: 0, initialized: false, last_sync: 0 }
     }
 
     pub async fn reload_if_stale(&mut self, db: &Db, force: bool) {
@@ -66,6 +68,29 @@ impl Engine {
         if force || now - self.last_reload > 30 {
             self.rules = load_rules(db).await;
             self.last_reload = now;
+        }
+        if !self.initialized {
+            // 恢复数据库里未关闭的告警：重启不重复触发、不重复 webhook
+            let c = db.lock().await;
+            let rows = c
+                .query(
+                    "SELECT id,rule_id,device_id,metric FROM alarms WHERE status IN ('active','acked')",
+                    &[],
+                )
+                .await
+                .unwrap_or_default();
+            drop(c);
+            for r in rows {
+                let id: i32 = r.get(0);
+                let rule_id: Option<i32> = r.get(1);
+                let dev: String = r.get(2);
+                let metric: String = r.get(3);
+                match rule_id {
+                    Some(rid) => { self.fired.insert(rid, id); }
+                    None => { if metric == "comm" { self.comm_fired.insert(dev, id); } }
+                }
+            }
+            self.initialized = true;
         }
     }
 
@@ -76,11 +101,28 @@ impl Engine {
         if r.op == "lt" { v > r.threshold + r.hysteresis } else { v < r.threshold - r.hysteresis }
     }
 
+    /// 与库中「仍活跃」告警对齐：网页手动 close / ack→close / 外部改状态后，
+    /// 下一拍清掉内存里的 fired，保证规则可再次触发（不依赖 Web 层回调 Engine）。
+    async fn sync_active(&mut self, db: &Db, now: i64) {
+        if now - self.last_sync < 5 { return; }
+        self.last_sync = now;
+        let c = db.lock().await;
+        let rows = c
+            .query("SELECT id FROM alarms WHERE status IN ('active','acked')", &[])
+            .await
+            .unwrap_or_default();
+        drop(c);
+        let alive: std::collections::HashSet<i32> = rows.iter().map(|r| r.get::<_, i32>(0)).collect();
+        self.fired.retain(|_, aid| alive.contains(aid));
+        self.comm_fired.retain(|_, aid| alive.contains(aid));
+    }
+
     pub async fn evaluate(&mut self, db: &Db, latest: &Latest, tx: &Sender<serde_json::Value>, webhook: &str) {
         let now = chrono::Utc::now().timestamp();
         let live_ids: std::collections::HashSet<i32> = self.rules.iter().map(|r| r.id).collect();
         self.fired.retain(|k, _| live_ids.contains(k));
         self.pending.retain(|k, _| live_ids.contains(k));
+        self.sync_active(db, now).await;
 
         let rules = self.rules.clone();
         for r in rules.iter().filter(|r| r.enabled) {

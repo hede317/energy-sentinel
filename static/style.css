@@ -41,7 +41,7 @@ nav#tabs button {
   color: var(--tx2); padding: 10px 14px; cursor: pointer; white-space: nowrap;
 }
 nav#tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
-main { padding: 14px 18px 40px; max-width: 1180px; margin: 0 auto; }
+main { padding: 16px 24px 40px; max-width: 1560px; margin: 0 auto; }
 .tab { display: none; }
 .tab.active { display: block; }
 .card {
@@ -163,3 +163,44 @@ body { background: radial-gradient(1100px 700px at 75% -10%, #0e1730 0%, #090D16
 .modal { width: min(440px, 92vw); background: #0f1930; border: 1px solid var(--line); border-radius: 12px; padding: 18px; box-shadow: 0 10px 40px #000a; }
 .modal input { width: 100%; margin: 8px 0 12px; }
 .btn.danger.filled { background: rgba(239,68,68,.15); border-color: var(--danger); color: #FCA5A5; }
+
+/* ===== v0.4 Bento 布局 + 刀闸/离线/工艺细节 ===== */
+.ov-grid { display: grid; grid-template-columns: 1.85fr 1fr; gap: 16px; align-items: start; }
+.ov-left, .ov-right { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.cards2col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 1080px) { .ov-grid { grid-template-columns: 1fr; } .cards2col { grid-template-columns: repeat(2, 1fr); } }
+.devcard.offline { opacity: .45; border: 1px dashed rgba(239,68,68,.6); }
+.meter-box.offline { opacity: .45; stroke: #EF4444; stroke-dasharray: 5 4; }
+.svg-off { fill: #F87171; font-size: 10px; font-weight: 700; letter-spacing: .5px; }
+.offbadge { font-size: 10px; color: #F87171; border: 1px solid rgba(239,68,68,.5); border-radius: 4px; padding: 0 4px; margin-inline-end: 4px; }
+.knife { stroke: #10B981; stroke-width: 2.5; transition: all .3s ease; }
+.knife.open { stroke: #EF4444; }
+table thead th { position: sticky; top: 0; background: #121b30; z-index: 1; }
+tbody tr:nth-child(even) td { background: rgba(255,255,255,.02); }
+.pipe { stroke-dasharray: 16 10; animation: dashmove 1s linear infinite; }
+.sig { stroke: #64748b; stroke-width: 1.2; stroke-dasharray: 4 4; fill: none; }
+.svg-tiny { fill: #64748b; font-size: 10px; }
+
+/* ===== 一次接线图：精细化工业图元 / 刀闸 / 表箱 ===== */
+.ico { fill: none; stroke: #94a3b8; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.ico-fill { fill: #1e293b; stroke: #94a3b8; stroke-width: 1.6; stroke-linejoin: round; }
+.ico-accent { fill: none; stroke: var(--accent); stroke-width: 1.3; stroke-linecap: round; opacity: .85; }
+.led { fill: #34D399; animation: pulseDot 1.4s ease-in-out infinite; }
+.led2 { animation-delay: .7s; }
+.contact { fill: #cbd5e1; }
+.knife-tx { font-size: 10px; font-weight: 700; }
+.loadtrack { fill: #1E293B; }
+.brk:hover .contact { fill: var(--accent); }
+.feeder.open .ico, .feeder.open .ico-fill, .feeder.open .svg-load-tx { opacity: .35; }
+.feeder.offline .meter-box, .feeder.offline .ico, .feeder.offline .ico-fill,
+.feeder.offline .ico-accent, .feeder.offline .svg-val { opacity: .4; }
+.devcard .num, .devcard .row .num { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
+.devcard .name { align-items: center; gap: 4px; }
+
+/* ===== 恒压供水实验台图元 ===== */
+.pump-body { fill: #1e293b; stroke: #64748b; stroke-width: 2; }
+.pump-inner { fill: #0b1220; stroke: #334155; stroke-width: 1; }
+.impeller { fill: none; stroke: #38bdf8; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.needle { stroke: #f43f5e; stroke-width: 2.5; stroke-linecap: round; transition: transform .6s cubic-bezier(.3,.9,.4,1); transform-origin: 760px 92px; }
+#wsWave { animation: wave 2.4s ease-in-out infinite; }
+@keyframes wave { 0%,100% { transform: translateY(0); } 50% { transform: translateY(3px); } }

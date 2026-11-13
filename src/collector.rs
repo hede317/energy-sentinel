@@ -172,7 +172,12 @@ async fn alarm_counts(db: &Db) -> serde_json::Value {
 }
 
 async fn persist(app: &SharedApp, latest: &Latest, epi_only: bool) {
-    let c = app.db.lock().await;
+    // 批量单次 IO（UNNEST 多值插入），避免 25 次往返长时间占住全局 DB 锁
+    let mut ts_v: Vec<chrono::DateTime<chrono::Utc>> = Vec::new();
+    let mut dev_v: Vec<String> = Vec::new();
+    let mut met_v: Vec<String> = Vec::new();
+    let mut val_v: Vec<f64> = Vec::new();
+    let now = chrono::Utc::now();
     for (dev, st) in latest {
         if !st.comm { continue; }
         let metrics: &[&str] = if epi_only {
@@ -186,13 +191,20 @@ async fn persist(app: &SharedApp, latest: &Latest, epi_only: bool) {
         };
         for m in metrics {
             if let Some(v) = st.values.get(*m) {
-                let _ = c
-                    .execute(
-                        "INSERT INTO readings(ts,device_id,metric,value) VALUES(now(),$1,$2,$3)",
-                        &[dev, m, v],
-                    )
-                    .await;
+                ts_v.push(now);
+                dev_v.push(dev.clone());
+                met_v.push((*m).to_string());
+                val_v.push(*v);
             }
         }
     }
+    if ts_v.is_empty() { return; }
+    let c = app.db.lock().await;
+    let _ = c
+        .execute(
+            "INSERT INTO readings(ts,device_id,metric,value) SELECT * FROM UNNEST($1::timestamptz[],$2::text[],$3::text[],$4::float8[])",
+            &[&ts_v, &dev_v, &met_v, &val_v],
+        )
+        .await;
+    drop(c);
 }
