@@ -7,7 +7,7 @@ Rust 单二进制：**Modbus/OPC UA 采集 → PostgreSQL → 多语言看板 ·
 ## 运行 / Run
 
 - 服务：`http://127.0.0.1:8018`（launchd 常驻 `com.hedeyou.energy-sentinel`，日志 `/tmp/energy-sentinel.log`）
-- 数据库：Docker `energy-pg` @ **5436**（库 `energy_sentinel`，energy/energy2026）
+- 数据库：Docker `energy-pg` @ **5436**（库 `energy_sentinel`，energy/<你的密码>）
 - 依赖：Docker Desktop 需运行（energy-pg）；Docker 没开时本服务会自动重试等待
 
 ```bash
