@@ -24,6 +24,7 @@ pub fn router(app: SharedApp) -> Router {
         .route("/style.css", get(style_css))
         .route("/i18n/:lang", get(i18n))
         .route("/api/state", get(api_state))
+        .route("/api/health", get(api_health))
         .route("/api/stream", get(sse))
         .route("/api/history", get(api_history))
         .route("/api/alarms", get(api_alarms))
@@ -136,7 +137,16 @@ async fn sse(
                 (id.clone(), Value::Object(m))
             })
             .collect();
-        json!({"type": "tick", "ts": Utc::now().timestamp_millis(), "devices": devs})
+        let (injections, uptime_s) = {
+            let sim = app.sim.lock().await;
+            (sim.active_injections(), sim.uptime_s())
+        };
+        json!({
+            "type": "tick", "ts": Utc::now().timestamp_millis(), "devices": devs,
+            "injections": injections, "uptime_s": uptime_s,
+            "db_rows": app.db_rows.load(std::sync::atomic::Ordering::Relaxed),
+            "period_ms": 2000,
+        })
     };
     let stream = futures::StreamExt::chain(
         futures::stream::once(async move { Ok(Event::default().json_data(first).unwrap()) }),
@@ -167,6 +177,10 @@ async fn api_state(State(app): State<SharedApp>) -> Response {
             (id.clone(), Value::Object(m))
         })
         .collect();
+    let (injections, uptime_s) = {
+        let sim = app.sim.lock().await;
+        (sim.active_injections(), sim.uptime_s())
+    };
     Json(json!({
         "ts": Utc::now().timestamp_millis(),
         "devices": devices,
@@ -174,6 +188,30 @@ async fn api_state(State(app): State<SharedApp>) -> Response {
         "tou_spans": {"peak": tou.peak, "flat": tou.flat, "valley": tou.valley},
         "tariff": tou.tariff,
         "currency": tou.currency,
+        "injections": injections, "uptime_s": uptime_s,
+        "db_rows": app.db_rows.load(std::sync::atomic::Ordering::Relaxed),
+        "period_ms": 2000,
+    }))
+    .into_response()
+}
+
+/// 健康检查：K8s / 负载均衡探针 + 运行信息
+async fn api_health(State(app): State<SharedApp>) -> Response {
+    let (uptime_s, injections) = {
+        let sim = app.sim.lock().await;
+        (sim.uptime_s(), sim.active_injections())
+    };
+    let db_ok = {
+        let c = app.db.lock().await;
+        c.query_one("SELECT 1", &[]).await.is_ok()
+    };
+    Json(json!({
+        "status": if db_ok { "ok" } else { "degraded" },
+        "uptime_s": uptime_s,
+        "db_ok": db_ok,
+        "db_rows": app.db_rows.load(std::sync::atomic::Ordering::Relaxed),
+        "period_ms": 2000,
+        "active_injections": injections.len(),
     }))
     .into_response()
 }
@@ -650,44 +688,60 @@ async fn api_devices(State(app): State<SharedApp>) -> Response {
 async fn sim_cmd(State(app): State<SharedApp>, Json(b): Json<Value>) -> Response {
     let action = b.get("action").and_then(|v| v.as_str()).unwrap_or("");
     let device = b.get("device").and_then(|v| v.as_str()).unwrap_or("feeder-im");
+    let user = b.get("user").and_then(|v| v.as_str()).unwrap_or("ops");
+    let reason = b.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+
+    // (审计动作名, 目标设备, 明细)：每个演练/整定操作都留痕
     let mut sim = app.sim.lock().await;
-    match action {
+    let audit: (String, String, String) = match action {
         "overload" => {
             let kw = b.get("kw").and_then(|v| v.as_f64()).unwrap_or(40.0);
             let secs = b.get("secs").and_then(|v| v.as_f64()).unwrap_or(90.0);
             sim.overload(device, kw, secs);
+            ("sim_overload".into(), device.into(), format!("+{kw:.0}kW / {secs:.0}s"))
         }
         "comm_fault" => {
             let secs = b.get("secs").and_then(|v| v.as_f64()).unwrap_or(30.0);
             sim.comm_fault(device, secs);
+            ("sim_comm_fault".into(), device.into(), format!("{secs:.0}s 断链"))
         }
         "breaker" => {
             let on = b.get("on").and_then(|v| v.as_bool()).unwrap_or(true);
             sim.breaker(device, on);
             let act = if on { "breaker_close" } else { "breaker_open" };
-            let reason = b.get("reason").and_then(|v| v.as_str()).unwrap_or("");
-            let user = b.get("user").and_then(|v| v.as_str()).unwrap_or("ops");
-            let c = app.db.lock().await;
-            let _ = c
-                .execute(
-                    "INSERT INTO audit_logs(username,action,device,detail,result) VALUES($1,$2,$3,$4,'ok')",
-                    &[&user, &act, &device, &reason],
-                )
-                .await;
-            drop(c);
+            (act.into(), device.into(), reason.to_string())
         }
-        "clear" => sim.clear(),
+        "clear" => {
+            sim.clear();
+            ("sim_clear".into(), "全站".into(), "清除全部故障注入".into())
+        }
         "water_sp" => {
-            sim.water_sp(b.get("sp").and_then(|v| v.as_f64()).unwrap_or(0.42));
+            let sp = b.get("sp").and_then(|v| v.as_f64()).unwrap_or(0.42);
+            sim.water_sp(sp);
+            ("water_sp".into(), "ws-pump".into(), format!("SP={sp:.2} MPa"))
         }
         "water_demand" => {
             let pct = b.get("pct").and_then(|v| v.as_f64()).unwrap_or(1.0);
             let secs = b.get("secs").and_then(|v| v.as_f64()).unwrap_or(90.0);
             sim.water_demand(pct, secs);
+            ("water_demand".into(), "ws-pump".into(), format!("+{:.0}% / {secs:.0}s", pct * 100.0))
         }
         _ => return err("unknown action", StatusCode::BAD_REQUEST),
-    }
+    };
     drop(sim);
+
+    let (act, dev, detail) = audit;
+    {
+        let c = app.db.lock().await;
+        let _ = c
+            .execute(
+                "INSERT INTO audit_logs(username,action,device,detail,result) VALUES($1,$2,$3,$4,'ok')",
+                &[&user, &act, &dev, &detail],
+            )
+            .await;
+        drop(c);
+    }
+    let _ = app.tx.send(json!({"type": "audit", "ts": Utc::now().timestamp_millis()}));
     Json(json!({"ok": true})).into_response()
 }
 

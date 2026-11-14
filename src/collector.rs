@@ -23,6 +23,7 @@ pub struct App {
     pub sim: Mutex<SimWorld>,
     pub rules_dirty: AtomicBool,
     pub tou_cache: std::sync::Mutex<(i64, crate::db::Tou)>, // (缓存时间戳, TOU配置)
+    pub db_rows: std::sync::atomic::AtomicU64,              // readings 表行数（每分钟刷新）
 }
 
 pub type SharedApp = Arc<App>;
@@ -43,7 +44,18 @@ pub fn build_app(db: Db) -> SharedApp {
                 .into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
             currency: "CNY".into(),
         })),
+        db_rows: std::sync::atomic::AtomicU64::new(0),
     })
+}
+
+/// 读 readings 表规模（前端状态条展示），失败保留上次值
+pub async fn refresh_db_rows(app: &SharedApp) {
+    let c = app.db.lock().await;
+    if let Ok(row) = c.query_one("SELECT count(*)::bigint FROM readings", &[]).await {
+        let n: i64 = row.get(0);
+        app.db_rows.store(n.max(0) as u64, Ordering::Relaxed);
+    }
+    drop(c);
 }
 
 /// TOU 配置带缓存（60s），避免每 tick 打一次 settings 表
@@ -84,7 +96,12 @@ pub async fn run(app: SharedApp) {
     loop {
         interval.tick().await;
         tick += 1;
-        let snaps = app.sim.lock().await.tick(2.0);
+        if tick % 30 == 1 { refresh_db_rows(&app).await; } // 每分钟一次
+        let (snaps, injections, uptime_s) = {
+            let mut sim = app.sim.lock().await;
+            let s = sim.tick(2.0);
+            (s, sim.active_injections(), sim.uptime_s())
+        };
 
         // 更新最新值（通信故障：整台冻结，等看门狗报警）
         {
@@ -140,6 +157,9 @@ pub async fn run(app: SharedApp) {
         let _ = app.tx.send(json!({
             "type": "tick", "ts": chrono::Utc::now().timestamp_millis(),
             "devices": devs, "alarm_counts": counts, "tou_rate": tou.rate_of(hour),
+            "injections": injections, "uptime_s": uptime_s,
+            "db_rows": app.db_rows.load(Ordering::Relaxed),
+            "period_ms": 2000,
         }));
 
         // 落库：每 10s 一批 p/u/i/pf（总表加 f），每 60s 一次 epi

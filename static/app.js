@@ -62,6 +62,7 @@ const S = {
   alarmFilter: 'active', energyView: 'day',
   tariff: {}, currency: 'CNY',
   touSpans: null, hist: [], todayKwh: null, soe: [],
+  injections: [], uptime_s: null, db_rows: null, audit: [], energyData: null,
 };
 const THRESHOLDS = {
   u: [{ v: 400, c: '#EF4444' }, { v: 360, c: '#F59E0B' }],
@@ -138,30 +139,34 @@ function buildFeeders() {
       <g id="brk-${id}" class="brk" style="cursor:pointer" title="点击遥控分合闸">
         <circle cx="${x}" cy="252" r="3" class="contact"/>
         <circle cx="${x}" cy="286" r="3" class="contact"/>
-        <rect x="${x - 20}" y="246" width="40" height="46" fill="transparent"/>
         <line id="knife-c-${id}" x1="${x}" y1="252" x2="${x}" y2="286" class="knife"/>
         <line id="knife-o-${id}" x1="${x}" y1="252" x2="${x + 17}" y2="270" class="knife open" style="display:none"/>
         <text id="brkt-${id}" x="${x + 24}" y="273" class="svg-sub knife-tx">QF合</text>
+        <rect x="${x - 20}" y="246" width="52" height="46" fill="transparent" style="pointer-events:all"/>
       </g>
       <line x1="${x}" y1="286" x2="${x}" y2="298" class="wire flow" id="fl2-${id}"/>
       <!-- 智能电表表箱 -->
       <g id="mb-${id}" style="cursor:pointer">
-        <rect x="${x - 78}" y="298" width="156" height="84" rx="7" class="meter-box" id="box-${id}"/>
-        <circle id="dot-${id}" cx="${x - 66}" cy="312" r="4" class="dot"/>
-        <text x="${x - 56}" y="316" class="svg-name" id="nm-${id}">${t('dev.' + id)}</text>
-        <text x="${x + 70}" y="316" text-anchor="end" class="svg-off" id="off-${id}" style="display:none">OFFLINE</text>
-        <text x="${x}" y="340" text-anchor="middle" class="svg-val num" fill="${color}" id="v-${id}-p">--</text>
-        <text x="${x - 70}" y="355" class="svg-sub">U <tspan class="num" id="v-${id}-u">--</tspan> V</text>
-        <text x="${x + 4}" y="355" class="svg-sub">I <tspan class="num" id="v-${id}-i">--</tspan> A</text>
-        <text x="${x - 70}" y="369" class="svg-sub">PF <tspan class="num" id="v-${id}-pf">--</tspan></text>
-        <text x="${x + 70}" y="369" text-anchor="end" class="svg-load-tx" id="open-${id}" style="display:none">OPEN</text>
-        <rect x="${x - 70}" y="374" width="140" height="4" rx="2" class="loadtrack"/>
-        <rect id="load-${id}" x="${x - 70}" y="374" width="0" height="4" rx="2" fill="#10B981"/>
+        <rect x="${x - 78}" y="298" width="156" height="92" rx="7" class="meter-box" id="box-${id}"/>
+        <rect x="${x - 78}" y="298" width="156" height="3" rx="1.5" fill="${color}" opacity=".9"/>
+        <circle id="dot-${id}" cx="${x - 66}" cy="313" r="4" class="dot"/>
+        <text x="${x - 56}" y="317" class="svg-name" id="nm-${id}">${t('dev.' + id)}</text>
+        <text x="${x + 70}" y="317" text-anchor="end" class="svg-off" id="off-${id}" style="display:none">OFFLINE</text>
+        <!-- 内凹液晶数显槽 -->
+        <rect x="${x - 70}" y="324" width="140" height="42" rx="5" class="lcd-slot"/>
+        <text x="${x}" y="345" text-anchor="middle" class="svg-val num" fill="${color}" id="v-${id}-p">--</text>
+        <text x="${x - 66}" y="360" class="lcd-sub">U <tspan class="num" id="v-${id}-u">--</tspan></text>
+        <text x="${x - 8}" y="360" class="lcd-sub">I <tspan class="num" id="v-${id}-i">--</tspan></text>
+        <text x="${x + 34}" y="360" class="lcd-sub">PF <tspan class="num" id="v-${id}-pf">--</tspan></text>
+        <text x="${x + 66}" y="345" text-anchor="end" class="svg-off" id="open-${id}" style="display:none">OPEN</text>
+        <text x="${x - 70}" y="382" class="lcd-cap">负载率</text>
+        <rect x="${x - 26}" y="375" width="96" height="5" rx="2.5" class="loadtrack"/>
+        <rect id="load-${id}" x="${x - 26}" y="375" width="0" height="5" rx="2.5" fill="#10B981"/>
       </g>
-      <line x1="${x}" y1="382" x2="${x}" y2="392" class="wire"/>
+      <line x1="${x}" y1="390" x2="${x}" y2="400" class="wire"/>
       <!-- 精细化工业负载图元 -->
-      ${ICONS[icon](x, 422)}
-      <text x="${x}" y="460" text-anchor="middle" class="svg-load-tx">${t('dev.' + id)}</text>
+      ${ICONS[icon](x, 428)}
+      <text x="${x}" y="474" text-anchor="middle" class="svg-load-tx">${t('dev.' + id)}</text>
     </g>`;
   }
   g.innerHTML = svg;
@@ -173,6 +178,9 @@ function buildFeeders() {
       openBreakerModal(id, !brkOn(S.devices[id]));
     };
   }
+  // QF0 主进线总闸：拉闸后全站失电
+  const qf0 = document.getElementById('qf0');
+  if (qf0) qf0.onclick = () => openBreakerModal('meter-main', !brkOn(S.devices['meter-main']));
 }
 
 function updateDiagram() {
@@ -197,15 +205,21 @@ function updateDiagram() {
   ['p', 'q', 'pf', 'f', 'i', 'load_rate'].forEach(k => {
     put('meter-main', k, k === 'pf' ? f2(m.pf) : f1(m[k]));
   });
-  ['ua', 'ub', 'uc'].forEach(k => put('meter-main', k, f1(m[k])));
+  ['ua', 'ub', 'uc', 'imbalance'].forEach(k => put('meter-main', k, f1(m[k])));
   const busU = document.getElementById('v-bus-u');
   if (busU) busU.textContent = f1(m.u);
+  const busI = document.getElementById('v-bus-i');
+  if (busI) busI.textContent = f1(m.i);
   const qf0 = document.getElementById('qf0Txt');
+  const mainOn = brkOn(d['meter-main']);
   if (qf0) {
-    const on = brkOn(d['meter-main']);
-    qf0.textContent = on ? 'QF0 合 · CLOSED' : 'QF0 分 · OPEN';
-    qf0.style.fill = on ? '#34D399' : '#F87171';
+    qf0.textContent = mainOn ? 'QF0 合 · CLOSED' : 'QF0 分 · OPEN';
+    qf0.style.fill = mainOn ? '#34D399' : '#F87171';
   }
+  svgVis('qf0KnifeC', mainOn);
+  svgVis('qf0KnifeO', !mainOn);
+  const mvCap = document.getElementById('mvCap');
+  if (mvCap) mvCap.textContent = mainOn ? '250kVA / 400A' : '全站失电';
   const mvDot = document.getElementById('dot-meter-main');
   if (mvDot) mvDot.classList.toggle('bad', mOff);
   const mvBox = document.getElementById('box-meter-main');
@@ -244,7 +258,7 @@ function updateDiagram() {
     const loadPct = Math.max(0, Math.min(100, (st.p || 0) / CFG[id].rated * 100));
     const bar = document.getElementById('load-' + id);
     if (bar) {
-      bar.setAttribute('width', (140 * loadPct / 100).toFixed(1));
+      bar.setAttribute('width', (96 * loadPct / 100).toFixed(1));
       bar.setAttribute('fill', loadPct > 85 ? '#EF4444' : loadPct > 70 ? '#F59E0B' : '#10B981');
     }
     // 分闸/离线时停止电流流动动画
@@ -260,13 +274,15 @@ function updateDiagram() {
     if (nm) nm.textContent = t('dev.' + id);
   });
 
-  // 母排电流动画随总表负载率变速
+  // 母排电流动画随总表负载率变速；总闸拉开 = 全站失电
   const bus = document.querySelector('.busbar');
   if (bus) {
-    bus.classList.add('flow');
-    bus.classList.remove('slow', 'fast');
-    if (lr > 75) bus.classList.add('fast'); else if (lr < 40) bus.classList.add('slow');
-    bus.style.opacity = mOff ? '.35' : '1';
+    bus.classList.remove('slow', 'fast', 'flow');
+    if (!mainOn || mOff) { bus.style.opacity = '.25'; }
+    else {
+      bus.style.opacity = '1'; bus.classList.add('flow');
+      if (lr > 75) bus.classList.add('fast'); else if (lr < 40) bus.classList.add('slow');
+    }
   }
 }
 
@@ -318,19 +334,36 @@ function renderTou() {
 }
 
 /* ---------- SSE ---------- */
+function setSse(ok) {
+  const b = document.getElementById('sseBadge');
+  if (b) { b.classList.toggle('sse-ok', ok); b.classList.toggle('sse-bad', !ok); }
+  const tx = document.getElementById('sseTxt');
+  if (tx) tx.textContent = ok ? 'LIVE' : 'RECONNECT';
+  const st = document.getElementById('stSse');
+  if (st) { st.innerHTML = `<i class="st-dot"></i><b>SSE</b> ${ok ? 'Connected' : 'Reconnecting'}`; }
+  const bar = document.getElementById('statusBar');
+  if (bar) bar.classList.toggle('offline-sse', !ok);
+}
 function openSSE() {
   const es = new EventSource('/api/stream');
+  es.onopen = () => setSse(true);
+  es.onerror = () => setSse(false);
   es.onmessage = e => {
     const m = JSON.parse(e.data);
     if (m.type === 'tick') {
+      setSse(true);
       S.devices = m.devices; S.counts = m.alarm_counts || S.counts;
       if (m.tou_rate) S.tou_rate = m.tou_rate;
+      if (m.injections) S.injections = m.injections;
+      if (m.uptime_s != null) S.uptime_s = m.uptime_s;
+      if (m.db_rows != null) S.db_rows = m.db_rows;
       const main = S.devices['meter-main'];
       if (main) {
         S.hist.push(main.p); if (S.hist.length > 120) S.hist.shift();
       }
       renderTou(); updateDiagram(); updateCards(); updateWater();
       updateStatusbar(); updateKpis(); renderSpark();
+      renderInjections(); updateStatusBar();
     } else if (m.type === 'alarm') {
       const a = m.alarm || {};
       if (m.event === 'triggered') {
@@ -344,8 +377,64 @@ function openSSE() {
         renderSoe();
         if (curTab === 'alarms') loadAlarms();
       }
+    } else if (m.type === 'audit') {
+      loadAudit();
     }
   };
+}
+
+/* 激活故障倒计时胶囊 */
+function renderInjections() {
+  const host = document.getElementById('injectionPills');
+  if (!host) return;
+  const list = S.injections || [];
+  host.innerHTML = list.map(x => {
+    const left = x.remain_s < 0 ? '持续' : `${x.remain_s}s`;
+    return `<span class="inj-pill"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l9 17H3L12 3Z"/><path d="M12 9v5"/></svg>${esc(x.label)} · 剩余 <b class="num">${left}</b></span>`;
+  }).join('');
+}
+
+/* 底部工业状态条 */
+function updateStatusBar() {
+  const u = document.getElementById('stUptime');
+  if (u && S.uptime_s != null) {
+    const s = S.uptime_s, h = Math.floor(s / 3600), mm = Math.floor(s % 3600 / 60), ss = s % 60;
+    u.textContent = `${h}h ${String(mm).padStart(2, '0')}m ${String(ss).padStart(2, '0')}s`;
+  }
+  const r = document.getElementById('stRows');
+  if (r && S.db_rows != null) r.textContent = S.db_rows.toLocaleString();
+  const p = document.getElementById('stPeriod');
+  if (p) p.textContent = '2000';
+}
+
+/* 操作审计双 Tab */
+async function loadAudit() {
+  try {
+    const d = await api('/api/audit');
+    S.audit = d.audit || [];
+    const host = document.getElementById('auditList');
+    if (host) {
+      host.innerHTML = S.audit.length ? S.audit.map(a => `
+        <div class="audit-row">
+          <span class="when num">${fdate(new Date(a.ts).getTime())}</span>
+          <span class="who">${esc(a.user || 'system')}</span>
+          <span class="act"><span class="audit-badge ${esc(a.action)}">${esc(a.action)}</span>${esc(a.device || '')} <span class="muted">${esc(a.detail || '')}</span></span>
+        </div>`).join('') : '<p class="muted">暂无操作记录</p>';
+    }
+    const c = document.getElementById('auditTabCount');
+    if (c) c.textContent = S.audit.length;
+  } catch (e) { /* 忽略 */ }
+}
+function bindPanelTabs() {
+  document.querySelectorAll('.ptab').forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll('.ptab').forEach(b => b.classList.toggle('active', b === btn));
+      const aud = btn.dataset.pane === 'audit';
+      document.getElementById('soePane').hidden = aud;
+      document.getElementById('auditPane').hidden = !aud;
+      if (aud) loadAudit();
+    };
+  });
 }
 function locMsg(a) {
   const meta = a.meta || {};
@@ -386,18 +475,19 @@ async function loadTrend() {
     `<span><span class="key" style="background:${s.color}"></span>${s.name}</span>`).join('');
 }
 
-/* 通用折线图：支持双 Y 轴（series[].axis === 'right' 走右轴） */
+/* 通用折线图：支持双 Y 轴 + 鼠标十字准星毛玻璃 Tooltip */
 function drawChart(canvas, series, opts = {}) {
   const dpr = window.devicePixelRatio || 1;
   if (!canvas.dataset.h) canvas.dataset.h = canvas.getAttribute('height');
   const W = canvas.clientWidth || 900, H = +canvas.dataset.h;
-  canvas.width = W * dpr; canvas.height = H * dpr;
-  const ctx = canvas.getContext('2d'); ctx.scale(dpr, dpr);
-  ctx.clearRect(0, 0, W, H);
   const all = series.flatMap(s => s.data);
   if (!all.length) {
-    ctx.fillStyle = '#94a3b8'; ctx.font = '12px sans-serif';
-    ctx.fillText(t('trend.nodata'), W / 2 - 30, H / 2); return;
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    const c0 = canvas.getContext('2d'); c0.scale(dpr, dpr); c0.clearRect(0, 0, W, H);
+    c0.fillStyle = '#94a3b8'; c0.font = '12px sans-serif';
+    c0.fillText(t('trend.nodata'), W / 2 - 30, H / 2);
+    canvas._chartState = null;
+    return;
   }
   const xs = all.map(p => p[0]);
   const x0 = Math.min(...xs), x1 = Math.max(...xs) || x0 + 1;
@@ -409,14 +499,30 @@ function drawChart(canvas, series, opts = {}) {
     const pad = (b - a) * 0.12 || Math.max(Math.abs(a) * 0.1, 0.1);
     return [a - pad, b + pad];
   };
-  const [yl0, yl1] = rng(left.length ? left : all);
-  const [yr0, yr1] = rng(right);
-  const hasR = right.length > 0;
+  const state = {
+    W, H, dpr, x0, x1, series, opts,
+    yl: rng(left.length ? left : all), yr: rng(right), hasR: right.length > 0,
+    cursor: null,
+  };
+  canvas._chartState = state;
+  paintChart(canvas);
+  bindChartInteraction(canvas, 'line');
+}
+
+function paintChart(canvas) {
+  const st = canvas._chartState; if (!st) return;
+  const { W, H, dpr, x0, x1, series, opts, yl, yr, hasR } = st;
+  const [yl0, yl1] = yl, [yr0, yr1] = yr;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  const ctx = canvas.getContext('2d'); ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
+  const all = series.flatMap(s => s.data);
   const L = 56, R = hasR ? 54 : 12, T = 12, B = 26;
   const px = v => L + (v - x0) / (x1 - x0) * (W - L - R);
   const mk = (a, b) => v => H - B - (v - a) / (b - a) * (H - T - B);
   const pyL = mk(yl0, yl1), pyR = mk(yr0, yr1);
   const py = (v, s) => s.axis === 'right' ? pyR(v) : pyL(v);
+  st.px = px; st.py = py; st.pyL = pyL; st.L = L; st.R = R; st.T = T; st.B = B;
   const fmt = v => v.toFixed(Math.abs(yl1 - yl0) < 5 ? 2 : 0);
   ctx.font = '11px ui-monospace, monospace'; ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
@@ -433,15 +539,13 @@ function drawChart(canvas, series, opts = {}) {
     const v = x0 + (x1 - x0) * i / 4, x = px(v);
     ctx.fillStyle = '#94a3b8'; ctx.fillText(fdate(v).slice(5), x - 22, H - 8);
   }
-  // TOU 峰平谷背景色带
   if (opts.bands && S.touSpans) {
     const colors = { peak: 'rgba(245,158,11,.07)', flat: 'rgba(96,165,250,.05)', valley: 'rgba(16,185,129,.06)' };
     let cur = new Date(x0); cur.setMinutes(0, 0, 0);
     let guard = 0;
     while (cur.getTime() < x1 && guard++ < 400) {
       const nx = new Date(cur.getTime() + 3600_000);
-      const h = cur.getHours();
-      const rate = touRateOf(h);
+      const h = cur.getHours(), rate = touRateOf(h);
       ctx.fillStyle = colors[rate];
       ctx.fillRect(px(cur.getTime()), T, px(Math.min(nx.getTime(), x1)) - px(cur.getTime()), H - T - B);
       cur = nx;
@@ -449,7 +553,6 @@ function drawChart(canvas, series, opts = {}) {
   }
   for (const s of series) {
     if (!s.data.length) continue;
-    // 渐变填充
     ctx.beginPath();
     s.data.forEach((p, i) => i ? ctx.lineTo(px(p[0]), py(p[1], s)) : ctx.moveTo(px(p[0]), py(p[1], s)));
     const g = ctx.createLinearGradient(0, T, 0, H - B);
@@ -463,10 +566,8 @@ function drawChart(canvas, series, opts = {}) {
     if (s.axis === 'right') ctx.setLineDash([5, 3]);
     ctx.beginPath();
     s.data.forEach((p, i) => i ? ctx.lineTo(px(p[0]), py(p[1], s)) : ctx.moveTo(px(p[0]), py(p[1], s)));
-    ctx.stroke();
-    ctx.setLineDash([]);
+    ctx.stroke(); ctx.setLineDash([]);
   }
-  // 阈值警戒线（左轴）
   (opts.thresholds || []).forEach(th => {
     if (th.v < yl0 || th.v > yl1) return;
     const y = pyL(th.v);
@@ -475,7 +576,96 @@ function drawChart(canvas, series, opts = {}) {
     ctx.setLineDash([]);
     ctx.fillStyle = th.c; ctx.fillText(String(th.v), W - R - 32, y - 3);
   });
+  if (st.cursor != null) drawLineCrosshair(ctx, st);
 }
+
+/* 十字准星：吸附最近时间点 + 各曲线高亮圆点 */
+function drawLineCrosshair(ctx, st) {
+  const { cursor, series, px, py, L, R, T, B, H } = st;
+  const targetTs = st.x0 + cursor * (st.x1 - st.x0);
+  let best = null, bestD = Infinity;
+  for (const s of series) for (const p of s.data) {
+    const d = Math.abs(p[0] - targetTs);
+    if (d < bestD) { bestD = d; best = p[0]; }
+  }
+  if (best == null) return;
+  const x = px(best);
+  ctx.save();
+  ctx.strokeStyle = 'rgba(34,211,238,.75)'; ctx.setLineDash([5, 4]); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x, T); ctx.lineTo(x, H - B); ctx.stroke();
+  ctx.setLineDash([]);
+  for (const s of series) {
+    if (!s.data.length) continue;
+    let nearest = s.data[0];
+    for (const p of s.data) if (Math.abs(p[0] - best) < Math.abs(nearest[0] - best)) nearest = p;
+    if (Math.abs(nearest[0] - best) > (st.x1 - st.x0) / 30) continue;
+    const y = py(nearest[1], s);
+    ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fillStyle = s.color; ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+  }
+  ctx.restore();
+  st.snapTs = best;
+}
+
+/* 共享 Tooltip 浮层 */
+let chartTip = null;
+function showChartTip(ev, html) {
+  if (!chartTip) {
+    chartTip = document.createElement('div');
+    chartTip.className = 'chart-tip';
+    document.body.appendChild(chartTip);
+  }
+  chartTip.innerHTML = html;
+  chartTip.style.display = 'block';
+  const pad = 14, w = chartTip.offsetWidth, h = chartTip.offsetHeight;
+  let x = ev.clientX + pad, y = ev.clientY + pad;
+  if (x + w > window.innerWidth - 8) x = ev.clientX - w - pad;
+  if (y + h > window.innerHeight - 8) y = ev.clientY - h - pad;
+  chartTip.style.left = x + 'px'; chartTip.style.top = y + 'px';
+}
+function hideChartTip() { if (chartTip) chartTip.style.display = 'none'; }
+
+function bindChartInteraction(canvas, kind) {
+  if (canvas._bound) return;
+  canvas._bound = true;
+  canvas.onmousemove = ev => {
+    const st = canvas._chartState;
+    if (!st) return;
+    const rect = canvas.getBoundingClientRect();
+    if (kind === 'line') {
+      const rel = (ev.clientX - rect.left - st.L) / (st.W - st.L - st.R);
+      st.cursor = Math.max(0, Math.min(1, rel));
+      paintChart(canvas);
+      const ts = st.snapTs;
+      if (ts == null) return hideChartTip();
+      const rows = st.series.map(s => {
+        if (!s.data.length) return '';
+        let n = s.data[0];
+        for (const p of s.data) if (Math.abs(p[0] - ts) < Math.abs(n[0] - ts)) n = p;
+        return `<div class="tr"><i style="background:${s.color}"></i><span>${esc(s.name)}</span><b>${n[1].toFixed(2)}${s.axis === 'right' ? ' (右轴)' : ''}</b></div>`;
+      }).join('');
+      showChartTip(ev, `<div class="tt">${fdate(ts)}</div>${rows}`);
+    } else {
+      const rel = (ev.clientX - rect.left - st.L) / (st.W - st.L - st.R);
+      const n = st.items.length;
+      const idx = Math.max(0, Math.min(n - 1, Math.floor(rel * n)));
+      paintStackedBar(canvas, idx);
+      const it = st.items[idx];
+      showChartTip(ev, `<div class="tt">${esc(it.name)}</div>
+        <div class="tr"><i style="background:#f59e0b"></i><span>峰段</span><b>${it.peak.toFixed(2)} kWh</b></div>
+        <div class="tr"><i style="background:#60a5fa"></i><span>平段</span><b>${it.flat.toFixed(2)} kWh</b></div>
+        <div class="tr"><i style="background:#34d399"></i><span>谷段</span><b>${it.valley.toFixed(2)} kWh</b></div>`);
+    }
+  };
+  canvas.onmouseleave = () => {
+    const st = canvas._chartState; if (!st) return;
+    st.cursor = null; st.hover = null;
+    if (kind === 'line') paintChart(canvas); else paintStackedBar(canvas, null);
+    hideChartTip();
+  };
+}
+
 function touRateOf(h) {
   const hit = spans => (spans || []).some(([a, b]) => (a <= b ? h >= a && h < b : h >= a || h < b));
   if (!S.touSpans) return 'flat';
@@ -542,45 +732,96 @@ function updateStatusbar() {
   const f = document.getElementById('sbFreq');
   if (f && S.devices['meter-main']) f.textContent = f1(S.devices['meter-main'].f) + ' Hz';
 }
+const KPI_ICONS = {
+  totalp: '<path d="M13 2L4 14h6l-1 8 9-12h-6l1-8Z"/>',
+  today: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 13h3M8 17h6"/>',
+  loadrate: '<circle cx="12" cy="12" r="9"/><path d="M12 12l4-4"/><path d="M12 3v2M21 12h-2"/>',
+  pf: '<path d="M3 12h4l2-6 4 12 2-6h6"/>',
+  imbalance: '<path d="M4 18V9M10 18V5M16 18v-7M22 18v-4"/>',
+  thd: '<path d="M2 12h3l2-7 3 14 3-11 2 7 2-4h5"/>',
+};
+function kpiCard(id, key, unit) {
+  return `<div class="kpi">
+    <div class="kpi-head"><span class="t"><svg class="kpi-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${KPI_ICONS[id]}</svg>${t(key)}</span><span class="kpi-pill" id="kpill-${id}">--</span></div>
+    <div class="v num"><span id="kpi-${id}">--</span> <span class="unit">${unit}</span></div>
+    <div class="kpi-micro" id="kmicro-${id}"></div>
+  </div>`;
+}
 function buildKpis() {
   const wrap = document.getElementById('kpiRow');
   if (!wrap) return;
-  const items = [
-    ['totalp', 'kpi.totalp', 'kW', true], ['today', 'kpi.today', 'kWh', false],
-    ['loadrate', 'kpi.loadrate', '%', false], ['pf', 'kpi.pf', '', false],
-    ['imbalance', 'kpi.imbalance', '%', false], ['thd', 'kpi.thd', '%', false],
-  ];
-  wrap.innerHTML = items.map(([id, key, unit, spark]) => `
-    <div class="kpi"><div class="t">${t(key)}</div>
-      <div class="v num"><span id="kpi-${id}">--</span> <span class="unit">${unit}</span></div>
-      ${spark ? '<canvas id="sparkP" height="26"></canvas>' : ''}
-    </div>`).join('');
+  wrap.innerHTML = [
+    ['totalp', 'kpi.totalp', 'kW'], ['today', 'kpi.today', 'kWh'],
+    ['loadrate', 'kpi.loadrate', '%'], ['pf', 'kpi.pf', ''],
+    ['imbalance', 'kpi.imbalance', '%'], ['thd', 'kpi.thd', '%'],
+  ].map(([id, key, unit]) => kpiCard(id, key, unit)).join('');
+  // 静态微组件骨架
+  document.getElementById('kmicro-totalp').innerHTML = '<canvas id="sparkP" height="28"></canvas>';
+  document.getElementById('kmicro-today').innerHTML = '<div class="tou-mini" id="touMini"><i style="background:#f59e0b;width:33%"></i><i style="background:#60a5fa;width:33%"></i><i style="background:#34d399;width:34%"></i></div><div class="micro-row"><span>峰平谷占比</span><span id="todayCost" class="num">--</span></div>';
+  document.getElementById('kmicro-loadrate').innerHTML = '<div class="micro-track"><i id="lrBar" style="width:0;background:linear-gradient(90deg,#10B981,#F59E0B,#EF4444)"></i></div><div class="micro-row"><span>70% 预警 / 85% 告警</span><span class="muted">250kVA·400A</span></div>';
+  document.getElementById('kmicro-pf').innerHTML = '<div class="micro-scale"><span class="mark" id="pfMark" style="left:80%"></span></div><div class="micro-row"><span>0.50</span><span style="color:#6EE7B7">0.90 考核线</span><span>1.00</span></div>';
+  document.getElementById('kmicro-imbalance').innerHTML = '<div class="micro-mini" id="phaseMini"><i></i><i></i><i></i></div><div class="micro-row"><span>Ua/Ub/Uc</span><span id="imbCaps" class="kpi-pill ok">GB/T &lt;2%</span></div>';
+  document.getElementById('kmicro-thd').innerHTML = '<div class="micro-track"><i id="thdBar" style="width:0;background:linear-gradient(90deg,#10B981,#F59E0B,#EF4444)"></i></div><div class="micro-row"><span>0%</span><span id="thdCaps" class="kpi-pill ok">IEEE 519 &lt;5%</span><span>8%</span></div>';
 }
+const setPill = (id, text, cls) => { const el = document.getElementById('kpill-' + id); if (el) { el.textContent = text; el.className = 'kpi-pill ' + cls; } };
 function updateKpis() {
   const m = S.devices['meter-main']; if (!m) return;
   const set = (id, v) => { const el = document.getElementById('kpi-' + id); if (el) el.textContent = v; };
   set('totalp', f1(m.p)); set('loadrate', f1(m.load_rate)); set('pf', f2(m.pf));
   set('imbalance', f1(m.imbalance)); set('thd', f1(m.thd));
   if (S.todayKwh != null) set('today', f1(S.todayKwh));
+  // 状态胶囊
+  const lr = m.load_rate || 0, pf = m.pf || 0, imb = m.imbalance || 0, thd = m.thd || 0;
+  setPill('totalp', lr > 85 ? '过载' : '正常', lr > 85 ? 'bad' : 'ok');
+  setPill('loadrate', lr > 85 ? '过载' : lr > 70 ? '偏高' : '正常', lr > 85 ? 'bad' : lr > 70 ? 'warn' : 'ok');
+  setPill('pf', pf < 0.9 ? '偏低' : '达标', pf < 0.9 ? 'warn' : 'ok');
+  setPill('imbalance', imb < 2 ? '合格' : '超标', imb < 2 ? 'ok' : 'warn');
+  setPill('thd', thd < 5 ? '合格' : '超标', thd < 5 ? 'ok' : 'warn');
+  setPill('today', '累计', 'ok');
+  // 微可视化
+  const lrBar = document.getElementById('lrBar'); if (lrBar) lrBar.style.width = Math.min(100, lr) + '%';
+  const thdBar = document.getElementById('thdBar'); if (thdBar) thdBar.style.width = Math.min(100, thd / 8 * 100) + '%';
+  const pfMark = document.getElementById('pfMark'); if (pfMark) pfMark.style.left = Math.max(0, Math.min(100, (pf - 0.5) / 0.5 * 100)) + '%';
+  const mini = document.querySelectorAll('#phaseMini i');
+  const ph = [m.ua || 0, m.ub || 0, m.uc || 0], mx = Math.max(...ph, 1);
+  mini.forEach((el, i) => { el.style.height = (ph[i] / mx * 24) + 'px'; });
+  const ic = document.getElementById('imbCaps'); if (ic) { ic.textContent = imb < 2 ? 'GB/T <2% 合格' : '超标'; ic.className = 'kpi-pill ' + (imb < 2 ? 'ok' : 'warn'); }
+  const tc = document.getElementById('thdCaps'); if (tc) { tc.textContent = thd < 5 ? 'IEEE 519 <5%' : '超标'; tc.className = 'kpi-pill ' + (thd < 5 ? 'ok' : 'warn'); }
+  // 今日峰平谷占比 + 预估电费
+  const td = S.todayBuckets;
+  if (td) {
+    const tot = (td.peak_kwh || 0) + (td.flat_kwh || 0) + (td.valley_kwh || 0) || 1;
+    const bars = document.querySelectorAll('#touMini i');
+    if (bars[0]) bars[0].style.width = (td.peak_kwh / tot * 100) + '%';
+    if (bars[1]) bars[1].style.width = (td.flat_kwh / tot * 100) + '%';
+    if (bars[2]) bars[2].style.width = (td.valley_kwh / tot * 100) + '%';
+    const c = document.getElementById('todayCost');
+    if (c) c.textContent = '¥' + (td.cost || 0).toFixed(2);
+  }
 }
 function renderSpark() {
   const cv = document.getElementById('sparkP'); if (!cv || S.hist.length < 2) return;
   const dpr = window.devicePixelRatio || 1;
-  if (!cv.dataset.h) cv.dataset.h = cv.getAttribute('height');
-  const W = cv.clientWidth || 160, H = +cv.dataset.h;
+  const W = cv.clientWidth || 160, H = 28;
   cv.width = W * dpr; cv.height = H * dpr;
   const ctx = cv.getContext('2d'); ctx.scale(dpr, dpr); ctx.clearRect(0, 0, W, H);
   const mn = Math.min(...S.hist), mx = Math.max(...S.hist), rg = (mx - mn) || 1;
-  ctx.strokeStyle = '#06B6D4'; ctx.lineWidth = 1.5; ctx.beginPath();
-  S.hist.forEach((v, i) => {
-    const x = i / (S.hist.length - 1) * (W - 2) + 1;
-    const y = H - 3 - (v - mn) / rg * (H - 6);
-    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-  });
-  ctx.stroke();
+  const pts = S.hist.map((v, i) => [i / (S.hist.length - 1) * (W - 2) + 1, H - 3 - (v - mn) / rg * (H - 6)]);
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, 'rgba(6,182,212,.35)'); g.addColorStop(1, 'rgba(6,182,212,0)');
+  ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+  ctx.lineTo(pts[pts.length - 1][0], H); ctx.lineTo(pts[0][0], H); ctx.closePath();
+  ctx.fillStyle = g; ctx.fill();
+  ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+  ctx.strokeStyle = '#22D3EE'; ctx.lineWidth = 1.6; ctx.stroke();
 }
 async function fetchToday() {
-  try { const d = await api('/api/report/day'); S.todayKwh = d.totals.total_kwh; updateKpis(); } catch (e) { /* 忽略 */ }
+  try {
+    const d = await api('/api/report/day');
+    S.todayKwh = d.totals.total_kwh;
+    S.todayBuckets = d.totals;
+    updateKpis();
+  } catch (e) { /* 忽略 */ }
 }
 function soePush(a) {
   S.soe.unshift(Object.assign({}, a));
@@ -626,6 +867,55 @@ function openBreakerModal(id, on) {
 function closeBreakerModal() { document.getElementById('modal').hidden = true; MODAL = null; }
 
 /* ---------- 能耗报表 ---------- */
+function renderEnergySummary(d) {
+  const host = document.getElementById('energySummary'); if (!host) return;
+  if (S.energyView === 'day') {
+    const tt = d.totals || {};
+    const peak = (tt.peak_kwh || 0) * (d.tariff?.peak || 0);
+    const flat = (tt.flat_kwh || 0) * (d.tariff?.flat || 0);
+    const valley = (tt.valley_kwh || 0) * (d.tariff?.valley || 0);
+    const cards = [
+      ['总电量', `${(tt.total_kwh || 0).toFixed(1)}<small class="unit"> kWh</small>`, '当日累计用电', ''],
+      ['峰段电费', `¥${peak.toFixed(2)}`, `${(tt.peak_kwh || 0).toFixed(1)} kWh · ¥${d.tariff?.peak || 0}/kWh`, 'peak'],
+      ['平段电费', `¥${flat.toFixed(2)}`, `${(tt.flat_kwh || 0).toFixed(1)} kWh · ¥${d.tariff?.flat || 0}/kWh`, 'flat'],
+      ['谷段电费', `¥${valley.toFixed(2)}`, `${(tt.valley_kwh || 0).toFixed(1)} kWh · ¥${d.tariff?.valley || 0}/kWh`, 'valley'],
+    ];
+    host.innerHTML = cards.map(([k, v, sub, cls]) => `<div class="sumcard ${cls}"><div class="t">${k}</div><div class="v num">${v}</div><div class="sub">${sub}</div></div>`).join('');
+  } else {
+    const days = d.days || [];
+    const tot = days.reduce((a, b) => a + b.total_kwh, 0);
+    const cost = days.reduce((a, b) => a + b.cost, 0);
+    const avg = days.length ? tot / days.length : 0;
+    const maxDay = days.reduce((a, b) => (b.total_kwh > (a.total_kwh || 0) ? b : a), {});
+    host.innerHTML = [
+      ['月累计电量', `${tot.toFixed(1)}<small class="unit"> kWh</small>`, `${days.length} 天数据`, ''],
+      ['月累计电费', `¥${cost.toFixed(2)}`, '按分时电价核算', 'peak'],
+      ['日均用电', `${avg.toFixed(1)}<small class="unit"> kWh</small>`, '当月平均', 'flat'],
+      ['峰值日', `${(maxDay.total_kwh || 0).toFixed(1)}<small class="unit"> kWh</small>`, maxDay.date || '--', 'valley'],
+    ].map(([k, v, sub, cls]) => `<div class="sumcard ${cls}"><div class="t">${k}</div><div class="v num">${v}</div><div class="sub">${sub}</div></div>`).join('');
+  }
+}
+function exportCsv() {
+  const d = S.energyData; if (!d) return toast('暂无可导出数据', 'warn');
+  let rows;
+  if (S.energyView === 'day') {
+    rows = [['设备', '总电量(kWh)', '峰段(kWh)', '平段(kWh)', '谷段(kWh)', '电费']];
+    (d.devices || []).forEach(v => rows.push([v.name, v.total_kwh, v.peak_kwh, v.flat_kwh, v.valley_kwh, v.cost]));
+    const tt = d.totals || {};
+    rows.push(['合计', tt.total_kwh, tt.peak_kwh, tt.flat_kwh, tt.valley_kwh, tt.cost]);
+  } else {
+    rows = [['日期', '电量(kWh)', '电费']];
+    (d.days || []).forEach(v => rows.push([v.date, v.total_kwh, v.cost]));
+  }
+  const csv = '\uFEFF' + rows.map(r => r.map(x => `"${String(x ?? '').replaceAll('"', '""')}"`).join(',')).join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `energy-${S.energyView}-${document.getElementById('energyDate').value || 'report'}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  toast('CSV 已导出');
+}
 async function loadEnergy() {
   const dateEl = document.getElementById('energyDate');
   if (!dateEl.value) dateEl.valueAsDate = new Date();
@@ -634,6 +924,8 @@ async function loadEnergy() {
   const canvas = document.getElementById('energyCanvas');
   if (S.energyView === 'day') {
     const d = await api(`/api/report/day?date=${date}`);
+    S.energyData = d;
+    renderEnergySummary(d);
     document.getElementById('energyTariff').textContent =
       `${t('energy.peak')}${d.tariff.peak} / ${t('energy.flat')}${d.tariff.flat} / ${t('energy.valley')}${d.tariff.valley} ${d.currency === 'CNY' ? '¥/kWh' : '$/kWh'}`;
     const rows = d.devices.map(v => `<tr>
@@ -647,6 +939,8 @@ async function loadEnergy() {
   } else {
     const month = date.slice(0, 7);
     const d = await api(`/api/report/month?month=${month}`);
+    S.energyData = d;
+    renderEnergySummary(d);
     const rows = d.days.map(v => `<tr><td>${v.date}</td><td>${v.total_kwh}</td><td>${v.cost}</td></tr>`).join('');
     host.innerHTML = `<table><thead><tr><th>${t('energy.date')}</th><th>kWh</th><th>${t('energy.cost')}</th></tr></thead><tbody>${rows}</tbody></table>`;
     drawChart(canvas, [{ name: 'kWh', color: '#22d3ee', data: d.days.map(v => [new Date(v.date).getTime(), v.total_kwh]) }]);
@@ -656,29 +950,60 @@ function drawStackedBar(canvas, items) {
   const dpr = window.devicePixelRatio || 1;
   if (!canvas.dataset.h) canvas.dataset.h = canvas.getAttribute('height');
   const W = canvas.clientWidth || 900, H = +canvas.dataset.h;
+  canvas._chartState = { W, H, dpr, items, L: 40, R: 10, T: 10, B: 26, hover: null };
+  paintStackedBar(canvas, null);
+  bindChartInteraction(canvas, 'bar');
+}
+function paintStackedBar(canvas, hover) {
+  const st = canvas._chartState; if (!st) return;
+  const { W, H, dpr, items, L, R, T, B } = st;
   canvas.width = W * dpr; canvas.height = H * dpr;
   const ctx = canvas.getContext('2d'); ctx.scale(dpr, dpr); ctx.clearRect(0, 0, W, H);
   if (!items.length) return;
   const max = Math.max(...items.map(i => i.peak + i.flat + i.valley)) || 1;
-  const L = 40, R = 10, T = 10, B = 26;
   const bw = Math.min(90, (W - L - R) / items.length * 0.55);
   const colors = { peak: '#f59e0b', flat: '#60a5fa', valley: '#34d399' };
-  ctx.font = '11px ui-monospace, monospace'; ctx.fillStyle = '#94a3b8';
+  ctx.font = '11px ui-monospace, monospace';
   items.forEach((it, i) => {
     const cx = L + (i + 0.5) * (W - L - R) / items.length;
+    if (hover === i) {
+      ctx.fillStyle = 'rgba(34,211,238,.08)';
+      ctx.fillRect(cx - bw / 2 - 8, T, bw + 16, H - T - B);
+    }
     let y = H - B;
     for (const k of ['peak', 'flat', 'valley']) {
       const h = it[k] / max * (H - T - B);
-      ctx.fillStyle = colors[k]; ctx.fillRect(cx - bw / 2, y - h, bw, h); y -= h;
+      ctx.fillStyle = colors[k];
+      if (hover === i) { ctx.shadowColor = colors[k]; ctx.shadowBlur = 10; }
+      ctx.fillRect(cx - bw / 2, y - h, bw, h); y -= h;
+      ctx.shadowBlur = 0;
     }
-    ctx.fillStyle = '#94a3b8';
+    ctx.fillStyle = hover === i ? '#e2e8f0' : '#94a3b8';
     ctx.fillText(it.name.slice(0, 8), cx - 24, H - 8);
     ctx.fillText((it.peak + it.flat + it.valley).toFixed(1), cx - 14, y - 4);
   });
 }
 
 /* ---------- 告警 ---------- */
+async function loadAlarmSummary() {
+  try {
+    const d = await api('/api/alarms?status=all&limit=500');
+    const a = d.alarms || [];
+    const act = a.filter(x => x.status === 'active').length;
+    const ack = a.filter(x => x.status === 'acked').length;
+    const closed = a.filter(x => x.status === 'closed').length;
+    const today = a.filter(x => new Date(x.triggered_at).toDateString() === new Date().toDateString()).length;
+    const host = document.getElementById('alarmSummary');
+    if (host) host.innerHTML = [
+      ['未确认告警', act, '需立即处理', 'bad'],
+      ['已确认', ack, '等待关闭', 'warn'],
+      ['今日新增', today, '24h 内触发', ''],
+      ['已关闭', closed, '历史归档', 'ok'],
+    ].map(([k, v, sub, cls]) => `<div class="sumcard"><div class="t">${k}</div><div class="v num ${cls}" style="color:${cls === 'bad' ? '#FCA5A5' : cls === 'warn' ? '#FCD34D' : cls === 'ok' ? '#6EE7B7' : 'var(--tx)'}">${v}</div><div class="sub">${sub}</div></div>`).join('');
+  } catch (e) { /* 忽略 */ }
+}
 async function loadAlarms() {
+  loadAlarmSummary();
   const d = await api(`/api/alarms?status=${S.alarmFilter}&limit=100`);
   const host = document.getElementById('alarmTable');
   if (!d.alarms.length) { host.innerHTML = `<p class="muted">${t('alarm.empty')}</p>`; return; }
@@ -707,19 +1032,33 @@ async function toWo(alarmId, title) {
 async function loadWos() {
   const d = await api('/api/workorders');
   const host = document.getElementById('woTable');
-  if (!d.workorders.length) { host.innerHTML = `<p class="muted">${t('wo.empty')}</p>`; return; }
+  const wos = d.workorders || [];
+  const sum = document.getElementById('woSummary');
+  if (sum) sum.innerHTML = [
+    ['工单总数', wos.length, '全部工单', ''],
+    ['待处理', wos.filter(w => w.status === 'open').length, 'open', 'warn'],
+    ['处理中', wos.filter(w => w.status === 'processing').length, 'processing', 'bad'],
+    ['已闭环', wos.filter(w => w.status === 'closed').length, 'closed', 'ok'],
+  ].map(([k, v, sub, cls]) => `<div class="sumcard"><div class="t">${k}</div><div class="v num" style="color:${cls === 'warn' ? '#FCD34D' : cls === 'bad' ? '#FCA5A5' : cls === 'ok' ? '#6EE7B7' : 'var(--tx)'}">${v}</div><div class="sub">${sub}</div></div>`).join('');
+  if (!wos.length) { host.innerHTML = `<p class="muted">${t('wo.empty')}</p>`; return; }
   host.innerHTML = `<table><thead><tr><th>#</th><th>${t('wo.title')}</th><th>${t('common.status')}</th>
     <th>${t('wo.assignee')}</th><th>${t('wo.created')}</th><th>${t('wo.note')}</th><th></th></tr></thead><tbody>` +
-    d.workorders.map(w => `<tr>
+    wos.map(w => {
+      const notes = w.notes || [];
+      const timeline = `<div class="wt-timeline">
+        <div class="wt-node"><b>${fdate(new Date(w.created_at).getTime())}</b> 工单创建</div>
+        ${notes.map(n => `<div class="wt-node"><span class="who">${esc(n.author || 'ops')}</span><b>${esc(n.at || '')}</b> ${esc(n.note)}</div>`).join('') || '<div class="wt-node muted">暂无处理记录</div>'}
+      </div>`;
+      return `<tr>
       <td>${w.id}</td><td>${esc(w.title)}${w.alarm_id ? ` <span class="sev ${w.severity || 'info'}">A#${w.alarm_id}</span>` : ''}</td>
       <td><span class="st ${w.status}">${t('wo.st' + w.status)}</span></td>
       <td>${esc(w.assignee) || '--'}</td>
       <td>${fdate(new Date(w.created_at).getTime())}</td>
-      <td><div class="notes">${(w.notes || []).map(n => `<div>${n.at} ${esc(n.author)}: ${esc(n.note)}</div>`).join('')}</div>
-        <input id="wn-${w.id}" size="14"> <button class="btn sm" onclick="addNote(${w.id})">${t('wo.addnote')}</button></td>
+      <td>${timeline}<div style="margin-top:6px;display:flex;gap:5px"><input id="wn-${w.id}" size="12" placeholder="添加处理记录"> <button class="btn sm" onclick="addNote(${w.id})">${t('wo.addnote')}</button></div></td>
       <td>${w.status === 'open' ? `<button class="btn sm" onclick="woSt(${w.id},'processing')">${t('wo.set_processing')}</button> ` : ''}
           ${w.status !== 'closed' ? `<button class="btn sm danger" onclick="woSt(${w.id},'closed')">${t('wo.close_wo')}</button>` : ''}</td>
-    </tr>`).join('') + '</tbody></table>';
+    </tr>`;
+    }).join('') + '</tbody></table>';
 }
 async function addNote(id) {
   const el = document.getElementById('wn-' + id);
@@ -756,8 +1095,8 @@ async function loadRules() {
       <td>${r.op === 'gt' ? '&gt;' : '&lt;'} ${r.threshold}</td>
       <td>${r.duration_s}</td><td>${r.hysteresis}</td>
       <td><span class="sev ${r.severity}">${r.severity}</span></td>
-      <td><button class="btn sm" onclick="toggleRule(${r.id})">${r.enabled ? 'ON' : 'OFF'}</button>
-      <button class="btn sm danger" onclick="delRule(${r.id})">✕</button></td>
+      <td><label class="switch" title="${r.enabled ? '已启用' : '已停用'}"><input type="checkbox" ${r.enabled ? 'checked' : ''} onchange="toggleRule(${r.id})"><span class="slider"></span></label>
+      <button class="btn sm danger" onclick="delRule(${r.id})" title="删除规则">✕</button></td>
     </tr>`).join('') + '</tbody></table>';
 }
 async function toggleRule(id) { await api(`/api/rules/${id}/toggle`, { method: 'POST' }); loadRules(); }
@@ -775,8 +1114,7 @@ async function loadSettings() {
 }
 function loadApiDoc() {
   const base = location.origin;
-  document.getElementById('apiDoc').textContent =
-`# ${t('api.doc.latest')}
+  const text = `# ${t('api.doc.latest')}
 curl -H "X-API-Token: $TOKEN" ${base}/api/v1/open/latest
 
 # ${t('api.doc.history')}
@@ -794,10 +1132,30 @@ curl -H "X-API-Token: $TOKEN" "${base}/api/v1/open/export/day?date=$(date +%F)" 
 
 # ${t('api.doc.webhook')}
 POST {webhook_url}  {"event":"alarm.triggered","alarm":{...}}`;
+  const el = document.getElementById('apiDoc');
+  if (!el) return;
+  el._raw = text;
+  const H = s => esc(s);
+  el.innerHTML = text.split('\n').map(line => {
+    if (line.startsWith('# ')) return `<span class="cm">${H(line)}</span>`;
+    if (line.startsWith('curl')) {
+      return line.replace(/^(curl)(.*)$/, (_, c, rest) =>
+        `<span class="kw">${c}</span>` + H(rest).replace(/(https?:\/\/[^" ]+)/g, '<span class="u">$1</span>').replace(/(\$TOKEN)/g, '<span class="v">$1</span>'));
+    }
+    return H(line);
+  }).join('\n');
+}
+function copyApiDoc() {
+  const el = document.getElementById('apiDoc');
+  const text = el?._raw || el?.textContent || '';
+  navigator.clipboard.writeText(text).then(() => toast('API 命令已复制')).catch(() => toast('复制失败，请手动选择', 'warn'));
 }
 
 /* ---------- 绑定 ---------- */
 function bind() {
+  bindPanelTabs();
+  const csvBtn = document.getElementById('btnCsv'); if (csvBtn) csvBtn.onclick = exportCsv;
+  const copyBtn = document.getElementById('btnCopyApi'); if (copyBtn) copyBtn.onclick = copyApiDoc;
   document.querySelectorAll('nav#tabs button').forEach(b => b.onclick = () => switchTab(b.dataset.tab));
   document.getElementById('bellBtn').onclick = () => switchTab('alarms');
   document.getElementById('langSel').onchange = e => loadLang(e.target.value);
@@ -887,13 +1245,19 @@ function bind() {
 /* ---------- 启动 ---------- */
 (async function init() {
   bind();
+  setSse(false);
   await loadLang(S.lang);
   openSSE();
   api('/api/state').then(s => {
     S.tariff = s.tariff; S.currency = s.currency;
     S.touSpans = s.tou_spans || null;
+    if (s.injections) S.injections = s.injections;
+    if (s.uptime_s != null) S.uptime_s = s.uptime_s;
+    if (s.db_rows != null) S.db_rows = s.db_rows;
+    renderInjections(); updateStatusBar();
   }).catch(() => {});
   fetchToday(); setInterval(fetchToday, 60_000);
+  loadAudit();
   api('/api/alarms?status=all&limit=40').then(d => { S.soe = d.alarms.reverse(); renderSoe(); }).catch(() => {});
   setInterval(() => {
     const el = document.getElementById('sbClock');

@@ -16,30 +16,34 @@
     </div>
   </div>
   <div class="header-right">
+    <span id="sseBadge" class="badge sb sse-ok" title="SSE 实时链路"><span class="sse-dot"></span><span id="sseTxt">LIVE</span></span>
     <span id="sbOnline" class="badge sb" title="在线设备/总数">--/--</span>
     <span id="sbFreq" class="badge sb num">-- Hz</span>
     <span id="sbSev" class="badge sb"></span>
     <span id="sbClock" class="badge sb num">--:--:--</span>
     <span id="touBadge" class="badge"></span>
     <button id="bellBtn" class="bell" title="alarms"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="2" stroke-linecap="round"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg><span id="bellCount" class="bell-count" hidden>0</span></button>
-    <select id="langSel">
-      <option value="zh">中文</option><option value="en">English</option>
-      <option value="fr">Français</option><option value="pt">Português</option>
-      <option value="es">Español</option><option value="ur">اردو</option>
-      <option value="bn">বাংলা</option>
-    </select>
+    <div class="lang-wrap">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 010 18M12 3a15 15 0 000 18"/></svg>
+      <select id="langSel">
+        <option value="zh">中文</option><option value="en">English</option>
+        <option value="fr">Français</option><option value="pt">Português</option>
+        <option value="es">Español</option><option value="ur">اردو</option>
+        <option value="bn">বাংলা</option>
+      </select>
+    </div>
   </div>
 </header>
 
 <nav id="tabs">
-  <button data-tab="overview" class="active" data-i18n="nav.overview">总览</button>
-  <button data-tab="water" data-i18n="nav.water">供水实验台</button>
-  <button data-tab="trend" data-i18n="nav.trend">趋势</button>
-  <button data-tab="energy" data-i18n="nav.energy">能耗报表</button>
-  <button data-tab="alarms" data-i18n="nav.alarms">告警</button>
-  <button data-tab="workorders" data-i18n="nav.workorders">工单</button>
-  <button data-tab="devices" data-i18n="nav.devices">设备与规则</button>
-  <button data-tab="api" data-i18n="nav.api">对接</button>
+  <button data-tab="overview" class="active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="5" rx="1.5"/><rect x="13" y="10" width="8" height="11" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/></svg><span data-i18n="nav.overview">总览</span></button>
+  <button data-tab="water"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3c3 4 6 7 6 11a6 6 0 01-12 0c0-4 3-7 6-11Z"/><path d="M9 15a3 3 0 003 3"/></svg><span data-i18n="nav.water">供水实验台</span></button>
+  <button data-tab="trend"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 17l5-5 4 3 6-8 3 2"/><path d="M3 21h18"/></svg><span data-i18n="nav.trend">趋势</span></button>
+  <button data-tab="energy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4v16M12 12h2M12 16h5"/></svg><span data-i18n="nav.energy">能耗报表</span></button>
+  <button data-tab="alarms"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l9 17H3L12 3Z"/><path d="M12 9v5M12 17.5v.5"/></svg><span data-i18n="nav.alarms">告警</span></button>
+  <button data-tab="workorders"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg><span data-i18n="nav.workorders">工单</span></button>
+  <button data-tab="devices"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><circle cx="7" cy="7.5" r="1"/><circle cx="7" cy="16.5" r="1"/></svg><span data-i18n="nav.devices">设备与规则</span></button>
+  <button data-tab="api"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M13 4l-2 16"/></svg><span data-i18n="nav.api">对接</span></button>
 </nav>
 
 <main>
@@ -49,48 +53,83 @@
   <div class="ov-grid">
     <div class="ov-left">
       <div class="card glow">
-        <svg id="sld" viewBox="0 0 920 470" preserveAspectRatio="xMidYMid meet">
+        <svg id="sld" viewBox="0 0 920 500" preserveAspectRatio="xMidYMid meet">
           <defs>
             <pattern id="gridp" width="23" height="23" patternUnits="userSpaceOnUse">
               <circle cx="1.5" cy="1.5" r="1" fill="#1E293B"/>
             </pattern>
             <linearGradient id="copper" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0" stop-color="#e2e8f0"/><stop offset=".5" stop-color="#94a3b8"/><stop offset="1" stop-color="#475569"/>
+              <stop offset="0" stop-color="#f8fafc"/><stop offset=".35" stop-color="#cbd5e1"/><stop offset=".65" stop-color="#64748b"/><stop offset="1" stop-color="#334155"/>
             </linearGradient>
+            <linearGradient id="crown" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stop-color="#06B6D4"/><stop offset=".5" stop-color="#10B981"/><stop offset="1" stop-color="#06B6D4"/>
+            </linearGradient>
+            <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <filter id="card-shadow" x="-20%" y="-20%" width="140%" height="150%">
+              <feDropShadow dx="0" dy="5" stdDeviation="6" flood-color="#000" flood-opacity=".55"/>
+            </filter>
           </defs>
-          <rect width="920" height="470" fill="url(#gridp)" opacity=".55"/>
+          <rect width="920" height="500" fill="url(#gridp)" opacity=".55"/>
           <!-- 变压器 -->
           <circle cx="460" cy="36" r="15" fill="none" stroke="#94a3b8" stroke-width="2"/>
           <circle cx="460" cy="50" r="15" fill="none" stroke="#94a3b8" stroke-width="2"/>
           <text x="486" y="40" class="svg-label">10kV / 0.4kV</text>
-          <text x="486" y="56" class="svg-sub">S11-250kVA · Dyn11</text>
-          <line x1="460" y1="65" x2="460" y2="82" class="wire"/>
-          <rect x="446" y="82" width="28" height="16" rx="2" class="breaker"/>
-          <text x="484" y="95" class="svg-sub" id="qf0Txt">QF0 合</text>
-          <line x1="460" y1="98" x2="460" y2="112" class="wire"/>
-          <!-- 进线总表综合监控舱 -->
-          <g id="g-main">
-            <rect x="280" y="112" width="360" height="98" rx="8" class="meter-box" id="box-meter-main"/>
-            <circle id="dot-meter-main" cx="294" cy="128" r="4" class="dot"/>
-            <text x="306" y="133" class="svg-name" id="nm-meter-main">进线总表</text>
-            <text x="626" y="133" text-anchor="end" class="svg-off" id="off-meter-main" style="display:none">OFFLINE</text>
-            <text x="300" y="158" class="svg-sub">P  <tspan class="num" id="v-meter-main-p">--</tspan> <tspan class="unit">kW</tspan></text>
-            <text x="300" y="177" class="svg-sub">Q  <tspan id="v-meter-main-q">--</tspan> <tspan class="unit">kvar</tspan></text>
-            <text x="300" y="196" class="svg-sub">PF <tspan id="v-meter-main-pf">--</tspan></text>
-            <text x="412" y="158" class="svg-sub">Ua <tspan id="v-meter-main-ua">--</tspan></text>
-            <text x="412" y="177" class="svg-sub">Ub <tspan id="v-meter-main-ub">--</tspan></text>
-            <text x="412" y="196" class="svg-sub">Uc <tspan id="v-meter-main-uc">--</tspan></text>
-            <text x="524" y="158" class="svg-sub">I  <tspan id="v-meter-main-i">--</tspan> <tspan class="unit">A</tspan></text>
-            <text x="524" y="177" class="svg-sub">f  <tspan id="v-meter-main-f">--</tspan> <tspan class="unit">Hz</tspan></text>
-            <text x="622" y="196" text-anchor="end" class="svg-sub">负载率 <tspan class="num" id="v-meter-main-load_rate">--</tspan>%</text>
-            <rect x="524" y="201" width="118" height="5" rx="2.5" fill="#1E293B"/>
-            <rect id="mvLoadBar" x="524" y="201" width="0" height="5" rx="2.5" fill="#10B981"/>
+          <text x="486" y="56" class="svg-sub">S11-250kVA · Dyn11 · TN-S</text>
+          <line x1="460" y1="65" x2="460" y2="72" class="wire"/>
+          <!-- QF0 主进线刀闸（可点击遥控全厂总闸） -->
+          <g id="qf0" class="brk" style="cursor:pointer" title="点击遥控 QF0 总进线分合闸">
+            <circle cx="460" cy="72" r="3" class="contact"/>
+            <circle cx="460" cy="108" r="3" class="contact"/>
+            <line id="qf0KnifeC" x1="460" y1="72" x2="460" y2="108" class="knife"/>
+            <line id="qf0KnifeO" x1="460" y1="72" x2="478" y2="91" class="knife open" style="display:none"/>
+            <text x="486" y="95" class="svg-sub knife-tx" id="qf0Txt">QF0 合</text>
+            <!-- 顶层点击热区：放在最后，确保可接收指针 -->
+            <rect x="436" y="64" width="96" height="50" rx="6" fill="transparent" style="pointer-events:all"/>
           </g>
-          <line x1="460" y1="210" x2="460" y2="234" class="wire"/>
-          <!-- 母排 -->
-          <line x1="60" y1="234" x2="880" y2="234" class="busbar"/>
-          <text x="62" y="222" class="svg-label" data-i18n="ov.bus">0.4kV 母排</text>
-          <text x="818" y="222" class="svg-sub">U: <tspan id="v-bus-u">--</tspan> V</text>
+          <!-- 进线总表综合监控舱：三块内凹数显屏 -->
+          <g id="g-main">
+            <rect x="230" y="112" width="460" height="104" rx="10" class="meter-box" id="box-meter-main" filter="url(#card-shadow)"/>
+            <rect x="230" y="112" width="460" height="3" rx="1.5" fill="url(#crown)" opacity=".9"/>
+            <circle id="dot-meter-main" cx="244" cy="126" r="4" class="dot"/>
+            <text x="256" y="130" class="svg-name" id="nm-meter-main">进线总表 · 综合监控舱</text>
+            <text x="676" y="130" text-anchor="end" class="svg-off" id="off-meter-main" style="display:none">OFFLINE</text>
+            <!-- 左槽：功率舱 -->
+            <rect x="242" y="138" width="140" height="66" rx="6" class="lcd-slot"/>
+            <text x="252" y="152" class="lcd-cap">有功功率 P</text>
+            <text x="252" y="174" class="lcd-big" id="v-meter-main-p">--</text><text x="366" y="174" text-anchor="end" class="unit">kW</text>
+            <text x="252" y="192" class="lcd-sub">Q <tspan class="num" id="v-meter-main-q">--</tspan> kvar</text>
+            <text x="322" y="192" class="lcd-sub">PF <tspan class="num" id="v-meter-main-pf">--</tspan></text>
+            <!-- 中槽：三相电压舱 -->
+            <rect x="390" y="138" width="140" height="66" rx="6" class="lcd-slot"/>
+            <text x="400" y="152" class="lcd-cap">三相电压 Ua/Ub/Uc</text>
+            <text x="400" y="170" class="lcd-sub">Ua <tspan class="num" id="v-meter-main-ua">--</tspan></text>
+            <text x="400" y="184" class="lcd-sub">Ub <tspan class="num" id="v-meter-main-ub">--</tspan></text>
+            <text x="400" y="198" class="lcd-sub">Uc <tspan class="num" id="v-meter-main-uc">--</tspan></text>
+            <text x="470" y="184" class="lcd-sub">Δ <tspan class="num" id="v-meter-main-imbalance">--</tspan>%</text>
+            <!-- 右槽：电流频率 + 负载率条（严格在 x=545..670 内，不穿模） -->
+            <rect x="538" y="138" width="140" height="66" rx="6" class="lcd-slot"/>
+            <text x="548" y="152" class="lcd-cap">电流 / 频率 / 负载率</text>
+            <text x="548" y="170" class="lcd-sub">I <tspan class="num" id="v-meter-main-i">--</tspan> A</text>
+            <text x="608" y="170" class="lcd-sub">f <tspan class="num" id="v-meter-main-f">--</tspan> Hz</text>
+            <text x="548" y="184" class="lcd-sub">负载率 <tspan class="num" id="v-meter-main-load_rate">--</tspan>%</text>
+            <rect x="548" y="190" width="118" height="6" rx="3" fill="#1E293B"/>
+            <rect id="mvLoadBar" x="548" y="190" width="0" height="6" rx="3" fill="#10B981"/>
+            <text x="666" y="184" text-anchor="end" class="lcd-cap" id="mvCap">250kVA</text>
+          </g>
+          <line x1="460" y1="216" x2="460" y2="234" class="wire"/>
+          <!-- 0.4kV 三相铜母排：双层高光 + 电流脉冲 -->
+          <line x1="60" y1="234" x2="880" y2="234" stroke="#0f172a" stroke-width="9" stroke-linecap="round"/>
+          <line x1="60" y1="234" x2="880" y2="234" class="busbar" stroke="url(#copper)"/>
+          <line x1="60" y1="231" x2="880" y2="231" stroke="#fff" stroke-opacity=".35" stroke-width="1"/>
+          <g class="phase-tags">
+            <circle cx="72" cy="234" r="4" fill="#F59E0B"/><text x="80" y="224" class="svg-tiny">A</text>
+            <circle cx="94" cy="234" r="4" fill="#10B981"/><text x="102" y="224" class="svg-tiny">B</text>
+            <circle cx="116" cy="234" r="4" fill="#EF4444"/><text x="124" y="224" class="svg-tiny">C</text>
+          </g>
+          <text x="62" y="252" class="svg-label" data-i18n="ov.bus">0.4kV 三相四线母排 (TN-S)</text>
+          <text x="818" y="222" class="svg-sub">U: <tspan id="v-bus-u">--</tspan> V · I: <tspan id="v-bus-i">--</tspan> A</text>
           <!-- 分回路由 JS 生成 #g-feeders -->
           <g id="g-feeders"></g>
         </svg>
@@ -101,15 +140,29 @@
         <button class="btn warn" id="btnOverAc" data-i18n="dev.sim.overload_ac">模拟空压机过载</button>
         <button class="btn warn" id="btnComm" data-i18n="dev.sim.comm_fault">模拟总表通信故障</button>
         <button class="btn danger" id="btnClear" data-i18n="dev.sim.clear">清除全部</button>
+        <span id="injectionPills" class="injection-pills"></span>
       </div>
     </div>
     <div class="ov-right">
       <div id="devCards" class="cards cards2col"></div>
       <div class="card glow">
-        <div class="card-title" data-i18n="soe.title">SOE 实时事件流</div>
-        <div id="soeList" class="soe"><p class="muted" data-i18n="soe.empty">暂无事件</p></div>
+        <div class="panel-tabs">
+          <button class="ptab active" data-pane="soe" id="ptabSoe"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l9 17H3L12 3Z"/><path d="M12 9v5"/></svg><span data-i18n="soe.title">SOE 实时告警流</span><span id="soeTabCount" class="ptab-count">0</span></button>
+          <button class="ptab" data-pane="audit" id="ptabAudit"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg><span>操作审计留痕</span><span id="auditTabCount" class="ptab-count">0</span></button>
+        </div>
+        <div id="soePane"><div id="soeList" class="soe"><p class="muted" data-i18n="soe.empty">暂无事件</p></div></div>
+        <div id="auditPane" hidden><div id="auditList" class="soe"><p class="muted">暂无操作记录</p></div></div>
       </div>
     </div>
+  </div>
+  <!-- 底部工业状态条 -->
+  <div id="statusBar" class="statusbar">
+    <span><i class="st-dot"></i><b id="stUptime">--</b> 运行时长</span>
+    <span><b id="stRows" class="num">--</b> 读数行数</span>
+    <span><b id="stPeriod" class="num">2000</b> ms 采集周期</span>
+    <span id="stSse"><i class="st-dot"></i><b>SSE</b> Connected</span>
+    <span class="spacer"></span>
+    <span class="muted">EnergySentinel · 工业 SCADA 监控哨兵</span>
   </div>
 </section>
 
@@ -255,12 +308,15 @@
 
 <!-- ===== 能耗报表 ===== -->
 <section id="tab-energy" class="tab">
+  <div id="energySummary" class="summary-cards"></div>
   <div class="card">
     <div class="controls">
       <button class="btn sm view active" data-v="day" data-i18n="energy.day">日报</button>
       <button class="btn sm view" data-v="month" data-i18n="energy.month">月报</button>
       <input type="date" id="energyDate">
       <span id="energyTariff" class="muted"></span>
+      <span class="spacer"></span>
+      <button class="btn sm" id="btnCsv"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M4 20h16"/></svg>导出 CSV</button>
     </div>
     <div id="energyTable"></div>
     <canvas id="energyCanvas" height="220"></canvas>
@@ -269,6 +325,7 @@
 
 <!-- ===== 告警 ===== -->
 <section id="tab-alarms" class="tab">
+  <div id="alarmSummary" class="summary-cards"></div>
   <div class="card">
     <div class="controls">
       <button class="btn sm fstatus active" data-s="active" data-i18n="alarm.active">未确认</button>
@@ -282,11 +339,13 @@
 
 <!-- ===== 工单 ===== -->
 <section id="tab-workorders" class="tab">
+  <div id="woSummary" class="summary-cards"></div>
   <div class="card">
-    <div class="controls">
-      <input id="woTitle" type="text" size="28" placeholder="">
-      <input id="woAssignee" type="text" size="10" placeholder="">
-      <button class="btn" id="woCreate" data-i18n="wo.create">新建工单</button>
+    <div class="card-title" data-i18n="wo.create">新建运维工单</div>
+    <div class="form-grid">
+      <label><span>工单标题 <em>Title</em></span><input id="woTitle" type="text" placeholder="如：1# 空压机异响巡检"></label>
+      <label><span>负责人 <em>Assignee</em></span><input id="woAssignee" type="text" placeholder="如：张工"></label>
+      <label class="form-actions"><span>&nbsp;</span><button class="btn" id="woCreate" data-i18n="wo.create">＋ 新建工单</button></label>
     </div>
     <div id="woTable"></div>
   </div>
@@ -298,50 +357,64 @@
   <div class="card">
     <div class="card-title" data-i18n="dev.rules">告警规则（阈值 · 持续时间 · 滞回）</div>
     <div id="ruleTable"></div>
-    <div class="controls" id="ruleForm">
-      <select id="ruleDev"></select>
-      <select id="ruleMetric">
+    <div class="card-title" style="margin-top:16px">新增告警规则 <span class="muted" style="font-weight:400;font-size:12px">同设备+测点+方向将覆盖更新</span></div>
+    <div class="form-grid rule-grid" id="ruleForm">
+      <label><span>目标设备 <em>Device</em></span><select id="ruleDev"></select></label>
+      <label><span>监测指标 <em>Metric</em></span><select id="ruleMetric">
         <option value="p">P kW</option><option value="u">U V</option>
         <option value="i">I A</option><option value="pf">PF</option>
         <option value="pressure">Pressure MPa</option><option value="flow">Flow m³/h</option>
         <option value="f">Freq Hz</option>
-      </select>
-      <select id="ruleOp"><option value="gt">&gt;</option><option value="lt">&lt;</option></select>
-      <input id="ruleThreshold" type="number" step="0.1" value="50" size="6">
-      <input id="ruleDur" type="number" value="10" size="4" title="duration s">
-      <input id="ruleHyst" type="number" step="0.01" value="0.02" size="4" title="hysteresis">
-      <select id="ruleSev"><option value="info">info</option><option value="warning">warning</option><option value="critical">critical</option></select>
-      <button class="btn" id="ruleAdd" data-i18n="dev.rules.add">添加规则</button>
+      </select></label>
+      <label><span>触发方向 <em>Op</em></span><select id="ruleOp"><option value="gt">&gt; 高于</option><option value="lt">&lt; 低于</option></select></label>
+      <label><span>阈值 <em>Threshold</em></span><input id="ruleThreshold" type="number" step="0.1" value="50"></label>
+      <label><span>持续秒数 <em>Duration s</em></span><input id="ruleDur" type="number" value="10"></label>
+      <label><span>滞回死区 <em>Hysteresis</em></span><input id="ruleHyst" type="number" step="0.01" value="0.02"></label>
+      <label><span>告警等级 <em>Severity</em></span><select id="ruleSev"><option value="info">info 提示</option><option value="warning">warning 警告</option><option value="critical">critical 严重</option></select></label>
+      <label class="form-actions"><span>&nbsp;</span><button class="btn" id="ruleAdd" data-i18n="dev.rules.add">＋ 添加规则</button></label>
     </div>
   </div>
 </section>
 
 <!-- ===== 对接 ===== -->
 <section id="tab-api" class="tab">
-  <div class="card">
-    <div class="card-title" data-i18n="api.webhook">出站 Webhook（告警即时推送）</div>
-    <div class="controls">
-      <input id="whUrl" type="text" size="48" placeholder="https://...">
-      <button class="btn" id="whSave" data-i18n="api.webhook_save">保存</button>
-      <button class="btn" id="whTest" data-i18n="api.webhook_test">发送测试</button>
+  <div class="api-grid">
+    <div class="api-left">
+      <div class="card">
+        <div class="card-title" data-i18n="api.webhook">出站 Webhook（告警即时推送）</div>
+        <div class="controls">
+          <input id="whUrl" type="text" placeholder="https://...">
+          <button class="btn" id="whSave" data-i18n="api.webhook_save">保存</button>
+          <button class="btn" id="whTest" data-i18n="api.webhook_test">发送测试</button>
+        </div>
+        <p class="muted" style="margin:6px 0 0">仅允许公网 http/https，内网地址与云元数据地址会被拒绝（SSRF 防护）。</p>
+      </div>
+      <div class="card">
+        <div class="card-title" data-i18n="api.token">开放 API 令牌（X-API-Token）</div>
+        <div class="controls">
+          <input id="apiTokenInput" type="password" placeholder="token" style="min-width:220px">
+          <button class="btn" id="tokenShow" data-i18n="api.token_show">显示</button>
+          <button class="btn" id="tokenRegen" data-i18n="api.token_regen">重新生成</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title" data-i18n="api.tariff">分时电价（峰 / 平 / 谷）</div>
+        <div class="form-grid" style="grid-template-columns:repeat(3,1fr) auto">
+          <label><span>峰 ¥/kWh</span><input id="tarPeak" type="number" step="0.01"></label>
+          <label><span>平 ¥/kWh</span><input id="tarFlat" type="number" step="0.01"></label>
+          <label><span>谷 ¥/kWh</span><input id="tarValley" type="number" step="0.01"></label>
+          <label class="form-actions"><span>&nbsp;</span><button class="btn" id="tarSave" data-i18n="api.save">保存</button></label>
+        </div>
+      </div>
     </div>
-  </div>
-  <div class="card">
-    <div class="card-title" data-i18n="api.token">开放 API 令牌（X-API-Token）</div>
-    <div class="controls">
-      <input id="apiTokenInput" type="password" size="36" placeholder="token" style="min-width:260px">
-      <button class="btn" id="tokenShow" data-i18n="api.token_show">显示</button>
-      <button class="btn" id="tokenRegen" data-i18n="api.token_regen">重新生成</button>
-    </div>
-    <pre id="apiDoc" class="doc"></pre>
-  </div>
-  <div class="card">
-    <div class="card-title" data-i18n="api.tariff">分时电价（峰 / 平 / 谷）</div>
-    <div class="controls">
-      <label>峰 <input id="tarPeak" type="number" step="0.01" size="5"></label>
-      <label>平 <input id="tarFlat" type="number" step="0.01" size="5"></label>
-      <label>谷 <input id="tarValley" type="number" step="0.01" size="5"></label>
-      <button class="btn" id="tarSave" data-i18n="api.save">保存</button>
+    <div class="api-right">
+      <div class="card" style="height:100%">
+        <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+          <span>开放 API 交互式文档 <span class="muted" style="font-weight:400;font-size:12px">/api/v1/open/*</span></span>
+          <button class="btn sm" id="btnCopyApi"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>一键复制</button>
+        </div>
+        <pre id="apiDoc" class="doc terminal"></pre>
+      </div>
     </div>
   </div>
 </section>

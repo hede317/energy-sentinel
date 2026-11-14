@@ -55,6 +55,47 @@ impl SimWorld {
     }
 
     fn elapsed(&self) -> f64 { self.start.elapsed().as_secs_f64() }
+    pub fn uptime_s(&self) -> u64 { self.start.elapsed().as_secs() }
+
+    /// 当前仍在生效的仿真注入/演练（供 SSE /api/state 透传倒计时胶囊）
+    pub fn active_injections(&self) -> Vec<serde_json::Value> {
+        let t = self.elapsed();
+        let mut out: Vec<serde_json::Value> = Vec::new();
+        for (dev, &(extra, until)) in &self.over {
+            if t < until {
+                out.push(serde_json::json!({
+                    "kind": "overload", "target": dev,
+                    "label": format!("{} +{:.0}kW", dev, extra),
+                    "remain_s": ((until - t).ceil() as i64).max(0),
+                }));
+            }
+        }
+        for (dev, &until) in &self.comm_bad_until {
+            if t < until {
+                out.push(serde_json::json!({
+                    "kind": "comm_fault", "target": dev,
+                    "label": format!("{} 通信中断", dev),
+                    "remain_s": ((until - t).ceil() as i64).max(0),
+                }));
+            }
+        }
+        for dev in &self.breaker_open {
+            out.push(serde_json::json!({
+                "kind": "breaker_open", "target": dev,
+                "label": format!("{} 已分闸", dev), "remain_s": -1,
+            }));
+        }
+        if let Some(until) = self.w_demand_until {
+            if t < until {
+                out.push(serde_json::json!({
+                    "kind": "water_demand", "target": "ws-pump",
+                    "label": format!("供水 +{:.0}% 用水高峰", self.w_demand_pct * 100.0),
+                    "remain_s": ((until - t).ceil() as i64).max(0),
+                }));
+            }
+        }
+        out
+    }
     fn hour_now() -> f64 {
         use chrono::Timelike;
         let l = chrono::Local::now();
@@ -163,8 +204,13 @@ impl SimWorld {
         let mut snaps = Vec::new();
         let mut total_p = 0.0;
 
+        // 总进线 QF0 分闸 → 全厂失电：母线电压归零，下级即使合闸也没有电
+        let main_open = self.breaker_open.contains("meter-main");
+
         // 总母线电压：380V 慢漂移 + 高载压降
-        let mut u_bus = 380.0 + 2.5 * ((t / 90.0) * std::f64::consts::PI).sin() + Self::noise(&mut rng, 0.6);
+        let mut u_bus = if main_open { 0.0 } else {
+            380.0 + 2.5 * ((t / 90.0) * std::f64::consts::PI).sin() + Self::noise(&mut rng, 0.6)
+        };
 
         // 先算分回路功率（含过载命令）
         let mut pw: std::collections::HashMap<String, (f64, f64)> = Default::default();
@@ -174,18 +220,18 @@ impl SimWorld {
             if let Some((extra, until)) = ov {
                 if t < until { p += extra; } else { self.over.remove(*f); }
             }
-            if self.breaker_open.contains(*f) { p = 0.0; }
+            if main_open || self.breaker_open.contains(*f) { p = 0.0; }
             pw.insert(f.to_string(), (p, pf));
             total_p += p;
         }
         // 高载压降：总功率超 90kW 后每 20kW 掉 1.2V
-        if total_p > 90.0 { u_bus -= (total_p - 90.0) / 20.0 * 1.2; }
+        if !main_open && total_p > 90.0 { u_bus -= (total_p - 90.0) / 20.0 * 1.2; }
 
         for f in &feeders {
             let (p, pf) = pw[*f];
-            let u = u_bus + Self::noise(&mut rng, 0.4);
+            let u = if main_open { 0.0 } else { u_bus + Self::noise(&mut rng, 0.4) };
             let i = if u > 1.0 { p * 1000.0 / (1.732 * u * pf) } else { 0.0 };
-            let q = p * (1.0 - pf * pf).sqrt() / pf;
+            let q = if main_open { 0.0 } else { p * (1.0 - pf * pf).sqrt() / pf };
             let comm = self.comm_ok(f, t);
             let brk = !self.breaker_open.contains(*f);
             let epi_val = {
@@ -196,31 +242,34 @@ impl SimWorld {
             snaps.push(Snap {
                 device: f.to_string(), ts, u: (u * 10.0).round() / 10.0, i: (i * 10.0).round() / 10.0,
                 p: (p * 10.0).round() / 10.0, q: (q * 10.0).round() / 10.0,
-                pf: (pf * 1000.0).round() / 1000.0, f: ((50.0 + Self::noise(&mut rng, 0.02)) * 10.0).round() / 10.0,
+                pf: if main_open { 1.0 } else { (pf * 1000.0).round() / 1000.0 },
+                f: if main_open { 0.0 } else { ((50.0 + Self::noise(&mut rng, 0.02)) * 10.0).round() / 10.0 },
                 epi: epi_val, breaker: brk, comm, extra: Default::default(),
             });
         }
 
         // 进线总表 = 分回路之和 × 线损 2%
-        let p_main = total_p * 1.02;
-        let u_m = u_bus + Self::noise(&mut rng, 0.3);
-        let pf_main = if total_p > 1.0 {
+        let p_main = if main_open { 0.0 } else { total_p * 1.02 };
+        let u_m = if main_open { 0.0 } else { u_bus + Self::noise(&mut rng, 0.3) };
+        let pf_main = if main_open {
+            1.0
+        } else if total_p > 1.0 {
             let qs: f64 = snaps.iter().map(|s| s.q).sum::<f64>();
             // PF = P/S = P/√(P²+Q²)（此前分子分母写反导致恒为 1.0）
             (total_p / (total_p * total_p + qs * qs).sqrt()).clamp(0.1, 1.0)
         } else { 0.99 };
-        let i_main = p_main * 1000.0 / (1.732 * u_m * pf_main.max(0.1));
+        let i_main = if main_open || u_m <= 1.0 { 0.0 } else { p_main * 1000.0 / (1.732 * u_m * pf_main.max(0.1)) };
         let epi = self.epi.entry("meter-main".into()).or_insert(0.0);
         *epi += p_main * dt / 3600.0;
         // 电力衍生指标（教学口径）：三相电压轻度不平衡 + THD + 变压器负载率（额定 400A）
-        let ph = 220.0;
-        let ua = ph * (1.0 + 0.013 * ((t / 60.0) * std::f64::consts::PI).sin()) + Self::noise(&mut rng, 0.5);
-        let ub = ph * (1.0 - 0.009) + Self::noise(&mut rng, 0.5);
-        let uc = ph * (1.0 - 0.004) + Self::noise(&mut rng, 0.5);
+        let ph = if main_open { 0.0 } else { 220.0 };
+        let ua = if main_open { 0.0 } else { ph * (1.0 + 0.013 * ((t / 60.0) * std::f64::consts::PI).sin()) + Self::noise(&mut rng, 0.5) };
+        let ub = if main_open { 0.0 } else { ph * (1.0 - 0.009) + Self::noise(&mut rng, 0.5) };
+        let uc = if main_open { 0.0 } else { ph * (1.0 - 0.004) + Self::noise(&mut rng, 0.5) };
         let mean_ph = (ua + ub + uc) / 3.0;
-        let imbalance = ((ua.max(ub).max(uc) - ua.min(ub).min(uc)) / mean_ph) * 100.0;
-        let thd = (2.6 + 1.0 * ((t / 37.0) * std::f64::consts::PI).sin() + Self::noise(&mut rng, 0.3)).clamp(1.5, 5.0);
-        let load_rate = i_main / 400.0 * 100.0;
+        let imbalance = if mean_ph > 1.0 { ((ua.max(ub).max(uc) - ua.min(ub).min(uc)) / mean_ph) * 100.0 } else { 0.0 };
+        let thd = if main_open { 0.0 } else { (2.6 + 1.0 * ((t / 37.0) * std::f64::consts::PI).sin() + Self::noise(&mut rng, 0.3)).clamp(1.5, 5.0) };
+        let load_rate = if main_open { 0.0 } else { i_main / 400.0 * 100.0 };
         let mut ex_main = std::collections::HashMap::new();
         ex_main.insert("ua".into(), (ua * 10.0).round() / 10.0);
         ex_main.insert("ub".into(), (ub * 10.0).round() / 10.0);
@@ -231,9 +280,10 @@ impl SimWorld {
         snaps.push(Snap {
             device: "meter-main".into(), ts, u: (u_m * 10.0).round() / 10.0,
             i: (i_main * 10.0).round() / 10.0, p: (p_main * 10.0).round() / 10.0,
-            q: (p_main * (1.0 - pf_main * pf_main).sqrt() / pf_main.max(0.1) * 10.0).round() / 10.0,
-            pf: (pf_main * 1000.0).round() / 1000.0, f: ((50.0 + Self::noise(&mut rng, 0.015)) * 10.0).round() / 10.0,
-            epi: (*epi * 10.0).round() / 10.0, breaker: !self.breaker_open.contains("meter-main"), comm: self.comm_ok("meter-main", t),
+            q: if main_open { 0.0 } else { (p_main * (1.0 - pf_main * pf_main).sqrt() / pf_main.max(0.1) * 10.0).round() / 10.0 },
+            pf: (pf_main * 1000.0).round() / 1000.0,
+            f: if main_open { 0.0 } else { ((50.0 + Self::noise(&mut rng, 0.015)) * 10.0).round() / 10.0 },
+            epi: (*epi * 10.0).round() / 10.0, breaker: !main_open, comm: self.comm_ok("meter-main", t),
             extra: ex_main,
         });
         // 恒压供水实验台
