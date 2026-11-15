@@ -128,5 +128,7 @@
   "modal.reason": "কারণ (ঐচ্ছিক)",
   "modal.exec": "সম্পাদন",
   "modal.cancel": "বাতিল",
-  "modal.returncheck": "যাচাই: {action} → {device}"
+  "modal.returncheck": "যাচাই: {action} → {device}",
+  "nav.topology": "Modbus ও টপোলজি",
+  "nav.cmms": "PV/ESS অপারেশন (CMMS)"
 }

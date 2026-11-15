@@ -128,5 +128,7 @@
   "modal.reason": "وجہ (اختیاری)",
   "modal.exec": "عمل کریں",
   "modal.cancel": "منسوخ",
-  "modal.returncheck": "تصدیق: {action} → {device}"
+  "modal.returncheck": "تصدیق: {action} → {device}",
+  "nav.topology": "Modbus اور ٹوپولوجی",
+  "nav.cmms": "PV/ESS آپریشنز (CMMS)"
 }

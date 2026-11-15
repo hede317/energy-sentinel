@@ -44,6 +44,14 @@ pub fn router(app: SharedApp) -> Router {
         .route("/api/settings", get(settings_get).post(settings_post))
         .route("/api/settings/token", get(token_show).post(token_regen))
         .route("/api/webhook/test", post(webhook_test))
+        .route("/api/modbus/overview", get(modbus_overview))
+        .route("/api/modbus/log", post(modbus_log))
+        .route("/api/cmms/overview", get(cmms_overview))
+        .route("/api/cmms/inspection", post(cmms_inspection))
+        .route("/api/cmms/defect", post(cmms_defect))
+        .route("/api/cmms/defect/status", post(cmms_defect_status))
+        .route("/api/cmms/ticket", post(cmms_ticket))
+        .route("/api/cmms/ticket/step", post(cmms_ticket_step))
         .route("/api/v1/open/devices", options(cors_opt).get(open_devices))
         .route("/api/v1/open/latest", options(cors_opt).get(open_latest))
         .route("/api/v1/open/history", options(cors_opt).get(open_history))
@@ -739,6 +747,20 @@ async fn sim_cmd(State(app): State<SharedApp>, Json(b): Json<Value>) -> Response
                 &[&user, &act, &dev, &detail],
             )
             .await;
+        // 断链注入 / 清除恢复 → 同步落一条采集排障记录（供 Modbus 报文台展示）
+        if action == "comm_fault" || action == "clear" {
+            let (tx, rx, status, stage, note, lat): (&str, &str, &str, &str, &str, i32) = if action == "comm_fault" {
+                ("01 03 20 00 00 02 CF CA", "(无响应)", "timeout", "Retry 3/3",
+                 "注入通信故障：连续 3 次 Rx Timeout>500ms，15s 看门狗触发 OFFLINE 告警，冻结最后有效值", 520)
+            } else {
+                ("01 03 20 00 00 02 CF CA", "01 03 04 00 00 0E E6 F8 12", "ok", "Auto-Heal 自动恢复",
+                 "清除故障注入：收到合法 RX 帧，CRC16 校验通过，链路自愈并自动消警", 18)
+            };
+            let _ = c.execute(
+                "INSERT INTO comm_logs(device_id,proto,slave_addr,func_code,reg_addr,tx_hex,rx_hex,latency_ms,status,fault_stage,handling_note) \
+                 VALUES($1,'Modbus-RTU','0x01','03H','0x2000',$2,$3,$4,$5,$6,$7)",
+                &[&device, &tx, &rx, &lat, &status, &stage, &note]).await;
+        }
         drop(c);
     }
     let _ = app.tx.send(json!({"type": "audit", "ts": Utc::now().timestamp_millis()}));
@@ -954,4 +976,299 @@ async fn open_export_csv(
         csv,
     )
         .into_response())
+}
+
+// ===================== v0.6.0 Modbus 点表 / 报文监视 =====================
+/// 真实 CRC16 (多项式 0xA001, 初值 0xFFFF)，低字节在前
+fn crc16(data: &[u8]) -> u16 {
+    let mut crc: u16 = 0xFFFF;
+    for b in data {
+        crc ^= *b as u16;
+        for _ in 0..8 {
+            if crc & 1 != 0 { crc = (crc >> 1) ^ 0xA001; } else { crc >>= 1; }
+        }
+    }
+    crc
+}
+fn hex_frame(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" ")
+}
+/// 构造一帧 RTU 请求 / 响应预览（含真实 CRC16）
+fn rtu_tx(slave: u8, fc: u8, reg: u16, qty: u16) -> String {
+    let mut v = vec![slave, fc, (reg >> 8) as u8, reg as u8, (qty >> 8) as u8, qty as u8];
+    let c = crc16(&v); v.push(c as u8); v.push((c >> 8) as u8);
+    hex_frame(&v)
+}
+fn rtu_rx(slave: u8, fc: u8, raw: u32) -> String {
+    let b = [(raw >> 24) as u8, (raw >> 16) as u8, (raw >> 8) as u8, raw as u8];
+    let mut v = vec![slave, fc, 4, b[0], b[1], b[2], b[3]];
+    let c = crc16(&v); v.push(c as u8); v.push((c >> 8) as u8);
+    hex_frame(&v)
+}
+fn tcp_frame(unit: u8, fc: u8, reg: u16, val: u16) -> String {
+    // MBAP: 事务 00 01 / 协议 00 00 / 长度 00 06 / unit；PDU: fc + addr + value
+    hex_frame(&[0, 1, 0, 0, 0, 6, unit, fc, (reg >> 8) as u8, reg as u8, (val >> 8) as u8, val as u8])
+}
+
+/// 全站 9 台设备点表矩阵 + 采集/排障日志
+async fn modbus_overview(State(app): State<SharedApp>) -> Response {
+    let c = app.db.lock().await;
+    let rows = c.query(
+        "SELECT d.id,d.name,d.kind,d.driver,d.meta, \
+                m.metric,m.unit,m.scale,m.reg_addr,m.reg_len,m.fc,m.dtype,m.endian,m.rw \
+         FROM devices d JOIN metrics m ON m.device_id=d.id \
+         ORDER BY d.kind DESC, d.id, m.reg_addr", &[]).await.unwrap_or_default();
+    drop(c);
+    let latest = app.latest.read().unwrap().clone();
+    let mut points: Vec<Value> = Vec::new();
+    for r in &rows {
+        let dev: String = r.get(0);
+        let name: String = r.get(1);
+        let kind: String = r.get(2);
+        let driver: String = r.get(3);
+        let meta: Option<Value> = r.get(4);
+        let metric: String = r.get(5);
+        let unit: Option<String> = r.get(6);
+        let scale: f64 = r.get(7);
+        let reg: Option<i32> = r.get(8);
+        let fc: Option<String> = r.get(10);
+        let dtype: Option<String> = r.get(11);
+        let endian: Option<String> = r.get(12);
+        let rw: Option<String> = r.get(13);
+        let reg_i = reg.unwrap_or(0);
+        let eng = latest.get(&dev).and_then(|s| s.values.get(&metric).copied()).unwrap_or(0.0);
+        let raw = if scale.abs() > 1e-9 { (eng / scale).round() as i64 } else { 0 };
+        let fc_s = fc.clone().unwrap_or_else(|| "03H".into());
+        let slave = meta.as_ref().and_then(|m| m.get("slave")).and_then(|v| v.as_i64());
+        let proto = if driver == "tcp" { "Modbus-TCP :502" } else { "Modbus-RTU 9600,8,N,1" };
+        let (tx, rx) = if proto.starts_with("Modbus-TCP") {
+            (tcp_frame(slave.unwrap_or(1) as u8, 0x03, reg_i as u16, raw as u16),
+             tcp_frame(slave.unwrap_or(1) as u8, 0x03, reg_i as u16, raw as u16))
+        } else {
+            (rtu_tx(slave.unwrap_or(1) as u8, if fc_s == "04H" { 0x04 } else { 0x03 }, reg_i as u16, 2),
+             rtu_rx(slave.unwrap_or(1) as u8, if fc_s == "04H" { 0x04 } else { 0x03 }, raw as u32))
+        };
+        points.push(json!({
+            "device_id": dev, "device_name": name, "kind": kind, "driver": driver,
+            "meta": meta.unwrap_or(json!({})), "metric": metric, "unit": unit.unwrap_or_default(),
+            "scale": scale, "reg_hex": format!("0x{reg_i:04X}"), "reg_dec": reg_i,
+            "fc": fc_s, "dtype": dtype.unwrap_or_default(), "endian": endian.unwrap_or_default(),
+            "rw": rw.unwrap_or_default(), "proto": proto,
+            "raw_int": raw, "raw_hex": format!("0x{raw:04X}"),
+            "eng_value": (eng * 100.0).round() / 100.0,
+            "tx_hex": tx, "rx_hex": rx,
+        }));
+    }
+    let c = app.db.lock().await;
+    let logs = c.query(
+        "SELECT ts,device_id,proto,slave_addr,func_code,reg_addr,tx_hex,rx_hex,latency_ms,status,fault_stage,handling_note \
+         FROM comm_logs ORDER BY ts DESC LIMIT 40", &[]).await.unwrap_or_default();
+    drop(c);
+    let logs: Vec<Value> = logs.iter().map(|r| {
+        let ts: DateTime<Utc> = r.get(0);
+        json!({
+            "ts": ts.to_rfc3339(), "device_id": r.get::<_, Option<String>>(1),
+            "proto": r.get::<_, Option<String>>(2), "slave_addr": r.get::<_, Option<String>>(3),
+            "func_code": r.get::<_, Option<String>>(4), "reg_addr": r.get::<_, Option<String>>(5),
+            "tx_hex": r.get::<_, Option<String>>(6), "rx_hex": r.get::<_, Option<String>>(7),
+            "latency_ms": r.get::<_, Option<i32>>(8).unwrap_or(0),
+            "status": r.get::<_, Option<String>>(9), "fault_stage": r.get::<_, Option<String>>(10),
+            "handling_note": r.get::<_, Option<String>>(11),
+        })
+    }).collect();
+    Json(json!({"points": points, "logs": logs, "crc_note": "CRC16 poly=0xA001 init=0xFFFF low-byte-first"})).into_response()
+}
+
+/// 前端手动触发一帧轮询 / 注入一帧 CRC 误码排障记录
+async fn modbus_log(State(app): State<SharedApp>, Json(b): Json<Value>) -> Response {
+    let mode = b.get("mode").and_then(|v| v.as_str()).unwrap_or("poll");
+    let dev = b.get("device_id").and_then(|v| v.as_str()).unwrap_or("meter-main");
+    let c = app.db.lock().await;
+    let (tx, rx, status, stage, note, latency) = if mode == "crc_error" {
+        ("01 03 20 00 00 02 CF CA".to_string(), "01 03 04 00 00 0E E6 F8 13 (CRC 错)".to_string(),
+         "crc_error", "Retry 1/3", "注入一帧 CRC 校验错误：重发请求并核对 A+/B- 极性、120Ω 终端电阻与屏蔽层单端接地", 505)
+    } else {
+        (rtu_tx(1, 3, 0x2000, 2), rtu_rx(1, 3, 3814),
+         "ok", "轮询正常", "手动触发单帧点位轮询：03H 读 0x2000，原始 0x0EE6=3814 ×0.1=381.4V，CRC16 校验通过", 18)
+    };
+    let ok = c.execute(
+        "INSERT INTO comm_logs(device_id,proto,slave_addr,func_code,reg_addr,tx_hex,rx_hex,latency_ms,status,fault_stage,handling_note) \
+         VALUES($1,'Modbus-RTU','0x01','03H','0x2000',$2,$3,$4,$5,$6,$7)",
+        &[&dev, &tx, &rx, &(latency as i32), &status, &stage, &note]).await.is_ok();
+    drop(c);
+    if ok { Json(json!({"ok": true, "tx_hex": tx, "rx_hex": rx, "status": status})).into_response() }
+    else { err("log insert failed", StatusCode::INTERNAL_SERVER_ERROR) }
+}
+
+// ===================== v0.6.0 光储运维 CMMS =====================
+async fn cmms_overview(State(app): State<SharedApp>) -> Response {
+    let c = app.db.lock().await;
+    let ins = c.query("SELECT id,code,area,inspector,shift,check_date,items,abnormal_count,erp_sync_status FROM inspections ORDER BY id DESC LIMIT 30", &[]).await.unwrap_or_default();
+    let def = c.query("SELECT id,code,device_id,level,category,title,phenomenon,root_cause,action_taken,reporter,handler,wo_id,erp_notif_no,status,found_at,resolved_at FROM defects ORDER BY id DESC LIMIT 50", &[]).await.unwrap_or_default();
+    let tks = c.query("SELECT id,ticket_no,title,task_mode,target_device,operator,guardian,duty_leader,status,steps,safety_checks,issued_at,finished_at FROM switching_tickets ORDER BY id DESC LIMIT 20", &[]).await.unwrap_or_default();
+    drop(c);
+    let inspections: Vec<Value> = ins.iter().map(|r| {
+        let d: chrono::NaiveDate = r.get(5);
+        json!({"id": r.get::<_, i32>(0), "code": r.get::<_, Option<String>>(1), "area": r.get::<_, Option<String>>(2),
+               "inspector": r.get::<_, Option<String>>(3), "shift": r.get::<_, Option<String>>(4),
+               "check_date": d.to_string(), "items": r.get::<_, Option<Value>>(6).unwrap_or(json!([])),
+               "abnormal_count": r.get::<_, Option<i32>>(7).unwrap_or(0), "erp_sync_status": r.get::<_, Option<String>>(8)})
+    }).collect();
+    let defects: Vec<Value> = def.iter().map(|r| {
+        let f: DateTime<Utc> = r.get(14);
+        let rv: Option<DateTime<Utc>> = r.get(15);
+        json!({"id": r.get::<_, i32>(0), "code": r.get::<_, Option<String>>(1), "device_id": r.get::<_, Option<String>>(2),
+               "level": r.get::<_, Option<String>>(3), "category": r.get::<_, Option<String>>(4), "title": r.get::<_, Option<String>>(5),
+               "phenomenon": r.get::<_, Option<String>>(6), "root_cause": r.get::<_, Option<String>>(7), "action_taken": r.get::<_, Option<String>>(8),
+               "reporter": r.get::<_, Option<String>>(9), "handler": r.get::<_, Option<String>>(10),
+               "wo_id": r.get::<_, Option<i32>>(11), "erp_notif_no": r.get::<_, Option<String>>(12),
+               "status": r.get::<_, Option<String>>(13), "found_at": f.to_rfc3339(),
+               "resolved_at": rv.map(|x| x.to_rfc3339())})
+    }).collect();
+    let tickets: Vec<Value> = tks.iter().map(|r| {
+        let i: DateTime<Utc> = r.get(11);
+        let f: Option<DateTime<Utc>> = r.get(12);
+        json!({"id": r.get::<_, i32>(0), "ticket_no": r.get::<_, Option<String>>(1), "title": r.get::<_, Option<String>>(2),
+               "task_mode": r.get::<_, Option<String>>(3), "target_device": r.get::<_, Option<String>>(4),
+               "operator": r.get::<_, Option<String>>(5), "guardian": r.get::<_, Option<String>>(6), "duty_leader": r.get::<_, Option<String>>(7),
+               "status": r.get::<_, Option<String>>(8), "steps": r.get::<_, Option<Value>>(9).unwrap_or(json!([])),
+               "safety_checks": r.get::<_, Option<Value>>(10).unwrap_or(json!([])),
+               "issued_at": i.to_rfc3339(), "finished_at": f.map(|x| x.to_rfc3339())})
+    }).collect();
+    Json(json!({
+        "inspections": inspections, "defects": defects, "tickets": tickets,
+        "erp_mapping": {"接口": "/api/v1/open/export/day", "凭证": "借:制造费用-电费 / 贷:应付账款-供电局",
+                        "cmms": "Webhook alarm.triggered → 缺陷通知单 → 维护工单 → 备件扣减"}
+    })).into_response()
+}
+
+/// 提交巡检：含异常项自动联动生成一条缺陷台账
+async fn cmms_inspection(State(app): State<SharedApp>, Json(b): Json<Value>) -> Response {
+    let area = b.get("area").and_then(|v| v.as_str()).unwrap_or("光伏阵列与逆变器区");
+    let inspector = b.get("inspector").and_then(|v| v.as_str()).unwrap_or("ops");
+    let shift = b.get("shift").and_then(|v| v.as_str()).unwrap_or("白班");
+    let items = b.get("items").cloned().unwrap_or(json!([]));
+    let abnormal = items.as_array().map(|a| a.iter().filter(|x| x.get("ok").and_then(|v| v.as_bool()) == Some(false)).count()).unwrap_or(0);
+    let c = app.db.lock().await;
+    let row = c.query_one(
+        "INSERT INTO inspections(code,area,inspector,shift,items,abnormal_count,erp_sync_status) \
+         VALUES($1,$2,$3,$4,$5,$6,'synced') RETURNING id",
+        &[&format!("XJ-{}", Utc::now().format("%Y%m%d-%H%M%S")), &area, &inspector, &shift, &items, &(abnormal as i32)]
+    ).await;
+    let (ok, defect_id) = match row {
+        Ok(_) => {
+            let mut did: Option<i32> = None;
+            if abnormal > 0 {
+                let first = items.as_array().and_then(|a| a.iter().find(|x| x.get("ok").and_then(|v| v.as_bool()) == Some(false)));
+                let title = first.and_then(|x| x.get("k")).and_then(|v| v.as_str()).unwrap_or("巡检异常项");
+                let val = first.and_then(|x| x.get("v")).and_then(|v| v.as_str()).unwrap_or("--");
+                if let Ok(dr) = c.query_one(
+                    "INSERT INTO defects(code,device_id,level,category,title,phenomenon,root_cause,action_taken,reporter,handler,erp_notif_no,status) \
+                     VALUES($1,$2,'minor','巡检发现', $3,$4,'待现场复核','纳入月度检修消缺',$5,$5,$6,'open') RETURNING id",
+                    &[&format!("QF-{}", Utc::now().format("%Y%m%d-%H%M%S")), &"inspection", &title,
+                      &format!("巡检 [{area}] 发现异常：{title} = {val}"), &inspector,
+                      &format!("ERP-PM-{}", Utc::now().format("%Y%m%d-%H%M"))]).await {
+                    did = Some(dr.get(0));
+                }
+            }
+            (true, did)
+        }
+        Err(_) => (false, None),
+    };
+    drop(c);
+    if ok { Json(json!({"ok": true, "abnormal_count": abnormal, "defect_id": defect_id})).into_response() }
+    else { err("inspection insert failed", StatusCode::INTERNAL_SERVER_ERROR) }
+}
+
+async fn cmms_defect(State(app): State<SharedApp>, Json(b): Json<Value>) -> Response {
+    let title = b.get("title").and_then(|v| v.as_str()).unwrap_or("");
+    if title.is_empty() { return err("title required", StatusCode::BAD_REQUEST); }
+    let dev = b.get("device_id").and_then(|v| v.as_str()).unwrap_or("meter-main");
+    let level = b.get("level").and_then(|v| v.as_str()).unwrap_or("minor");
+    let cat = b.get("category").and_then(|v| v.as_str()).unwrap_or("现场发现");
+    let phen = b.get("phenomenon").and_then(|v| v.as_str()).unwrap_or("");
+    let c = app.db.lock().await;
+    let ok = c.execute(
+        "INSERT INTO defects(code,device_id,level,category,title,phenomenon,root_cause,action_taken,reporter,handler,erp_notif_no,status) \
+         VALUES($1,$2,$3,$4,$5,$6,'待分析','待制定消缺方案',$7,$7,$8,'open')",
+        &[&format!("QF-{}", Utc::now().format("%Y%m%d-%H%M%S")), &dev, &level, &cat, &title, &phen, &"ops",
+          &format!("ERP-PM-{}", Utc::now().format("%Y%m%d-%H%M"))]).await.is_ok();
+    drop(c);
+    if ok { Json(json!({"ok": true})).into_response() } else { err("defect insert failed", StatusCode::INTERNAL_SERVER_ERROR) }
+}
+
+/// 流转缺陷状态；转 processing 时自动建 CMMS 工单并回填 wo_id / erp_notif_no
+async fn cmms_defect_status(State(app): State<SharedApp>, Json(b): Json<Value>) -> Response {
+    let id = b.get("id").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+    let status = b.get("status").and_then(|v| v.as_str()).unwrap_or("processing");
+    if !["open", "processing", "closed"].contains(&status) { return err("bad status", StatusCode::BAD_REQUEST); }
+    let c = app.db.lock().await;
+    let mut wo_id: Option<i32> = None;
+    if status == "processing" {
+        let title: String = c.query_opt("SELECT title FROM defects WHERE id=$1", &[&id]).await.ok().flatten()
+            .map(|r| r.get::<_, Option<String>>(0).unwrap_or_default()).unwrap_or_default();
+        if let Ok(r) = c.query_one(
+            "INSERT INTO work_orders(title,detail,status) VALUES($1,$2,'open') RETURNING id",
+            &[&format!("[CMMS消缺] {title}"), &format!("由缺陷 #{id} 自动转工单")]).await {
+            wo_id = Some(r.get(0));
+        }
+    }
+    let ok = if status == "closed" {
+        c.execute("UPDATE defects SET status='closed', resolved_at=now() WHERE id=$1", &[&id]).await.is_ok()
+    } else {
+        c.execute("UPDATE defects SET status=$2, wo_id=COALESCE($3, wo_id), erp_notif_no=COALESCE(erp_notif_no, $4) WHERE id=$1",
+                  &[&id, &status, &wo_id, &format!("ERP-PM-{}", Utc::now().format("%Y%m%d-%H%M"))]).await.is_ok()
+    };
+    drop(c);
+    if ok { Json(json!({"ok": true, "wo_id": wo_id})).into_response() }
+    else { err("update failed", StatusCode::INTERNAL_SERVER_ERROR) }
+}
+
+async fn cmms_ticket(State(app): State<SharedApp>, Json(b): Json<Value>) -> Response {
+    let title = b.get("title").and_then(|v| v.as_str()).unwrap_or("");
+    if title.is_empty() { return err("title required", StatusCode::BAD_REQUEST); }
+    let steps = b.get("steps").cloned().unwrap_or(json!([]));
+    let checks = b.get("safety_checks").cloned().unwrap_or(json!([]));
+    let no = format!("DZ-{}", Utc::now().format("%Y%m-%H%M%S"));
+    let c = app.db.lock().await;
+    let ok = c.execute(
+        "INSERT INTO switching_tickets(ticket_no,title,task_mode,target_device,operator,guardian,duty_leader,status,steps,safety_checks) \
+         VALUES($1,$2,$3,$4,$5,$6,$7,'in_progress',$8,$9)",
+        &[&no, &title,
+          &b.get("task_mode").and_then(|v| v.as_str()).unwrap_or("停电检修"),
+          &b.get("target_device").and_then(|v| v.as_str()).unwrap_or("feeder-im"),
+          &b.get("operator").and_then(|v| v.as_str()).unwrap_or("ops"),
+          &b.get("guardian").and_then(|v| v.as_str()).unwrap_or("监护"),
+          &b.get("duty_leader").and_then(|v| v.as_str()).unwrap_or("值长"),
+          &steps, &checks]).await.is_ok();
+    drop(c);
+    if ok { Json(json!({"ok": true, "ticket_no": no})).into_response() }
+    else { err("ticket insert failed", StatusCode::INTERNAL_SERVER_ERROR) }
+}
+
+/// 唱票 → 监护复诵 → 确认执行：勾选步骤并记录时间戳，全部完成自动置 completed
+async fn cmms_ticket_step(State(app): State<SharedApp>, Json(b): Json<Value>) -> Response {
+    let id = b.get("id").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+    let n = b.get("n").and_then(|v| v.as_i64()).unwrap_or(0) as i64;
+    let c = app.db.lock().await;
+    let row = c.query_opt("SELECT steps FROM switching_tickets WHERE id=$1", &[&id]).await.ok().flatten();
+    let Some(row) = row else { return err("ticket not found", StatusCode::NOT_FOUND); };
+    let mut steps: Vec<Value> = row.get::<_, Option<Value>>(0).and_then(|v| v.as_array().cloned()).unwrap_or_default();
+    let now = Utc::now().to_rfc3339();
+    for s in steps.iter_mut() {
+        if s.get("n").and_then(|v| v.as_i64()) == Some(n) {
+            s["done"] = json!(true);
+            s["at"] = json!(now);
+            s["sung_by"] = json!(b.get("operator").and_then(|v| v.as_str()).unwrap_or("ops"));
+            s["guardian"] = json!(b.get("guardian").and_then(|v| v.as_str()).unwrap_or("监护"));
+        }
+    }
+    let all = steps.iter().all(|s| s.get("done").and_then(|v| v.as_bool()) == Some(true));
+    let steps_v = Value::Array(steps);
+    let ok = c.execute(
+        "UPDATE switching_tickets SET steps=$2, status=$3, finished_at=CASE WHEN $3='completed' THEN now() ELSE finished_at END WHERE id=$1",
+        &[&id, &steps_v, &if all { "completed" } else { "in_progress" }]).await.is_ok();
+    drop(c);
+    if ok { Json(json!({"ok": true, "completed": all})).into_response() }
+    else { err("step update failed", StatusCode::INTERNAL_SERVER_ERROR) }
 }

@@ -128,5 +128,7 @@
   "modal.reason": "操作原因（选填）",
   "modal.exec": "确认执行",
   "modal.cancel": "取消",
-  "modal.returncheck": "返校核对：{action} → {device}"
+  "modal.returncheck": "返校核对：{action} → {device}",
+  "nav.topology": "Modbus与拓扑",
+  "nav.cmms": "光储运维(CMMS)"
 }

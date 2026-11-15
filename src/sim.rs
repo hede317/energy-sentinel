@@ -288,6 +288,39 @@ impl SimWorld {
         });
         // 恒压供水实验台
         snaps.push(self.water_tick(dt, &mut rng, ts));
+        // 光储微网：光伏逆变器 / BMS / PCS（教学口径，按日照与分时电价调度）
+        let pv_p = if h > 6.0 && h < 18.5 {
+            (((h - 6.0) / 12.5 * std::f64::consts::PI).sin().max(0.0) * 85.0 + Self::noise(&mut rng, 0.8)).max(0.0)
+        } else { 0.0 };
+        // 分时调度（与 TOU 峰平谷口径一致：峰 8-11/17-21，谷 23-8）
+        let hour = h as u32;
+        let is_peak = (8..11).contains(&hour) || (17..21).contains(&hour);
+        let is_valley = hour >= 23 || hour < 8;
+        let soc = 60.0 + 22.0 * ((t / 900.0) * std::f64::consts::PI).sin();
+        let pcs_p = if is_valley { -40.0 } else if is_peak { 60.0 } else { 0.0 };
+        let r1 = |v: f64| (v * 10.0).round() / 10.0;
+        let mk = |device: &str, extra: std::collections::HashMap<String, f64>| Snap {
+            device: device.into(), ts, u: 0.0, i: 0.0, p: 0.0, q: 0.0, pf: 1.0, f: 50.0,
+            epi: 0.0, breaker: true, comm: true, extra,
+        };
+        let mut pv = std::collections::HashMap::new();
+        pv.insert("dc_u".into(), r1(710.0 + Self::noise(&mut rng, 2.0)));
+        pv.insert("p".into(), r1(pv_p));
+        pv.insert("temp".into(), r1(48.0 + Self::noise(&mut rng, 1.5)));
+        pv.insert("epi".into(), r1(pv_p * dt / 3600.0));
+        snaps.push(mk("pv-inv-01", pv));
+        let mut bms = std::collections::HashMap::new();
+        bms.insert("soc".into(), r1(soc));
+        bms.insert("soh".into(), 98.2);
+        bms.insert("cell_dv".into(), ((18.0 + Self::noise(&mut rng, 3.0)) * 1000.0).round() / 1000.0);
+        bms.insert("temp".into(), r1(29.0 + Self::noise(&mut rng, 1.0)));
+        snaps.push(mk("ess-bms-01", bms));
+        let mut pcs = std::collections::HashMap::new();
+        pcs.insert("p".into(), pcs_p);
+        pcs.insert("p_set".into(), pcs_p);
+        pcs.insert("u".into(), 380.0);
+        pcs.insert("f".into(), 50.0);
+        snaps.push(mk("ess-pcs-01", pcs));
         snaps
     }
 

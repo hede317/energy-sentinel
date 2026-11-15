@@ -363,7 +363,7 @@ function openSSE() {
       }
       renderTou(); updateDiagram(); updateCards(); updateWater();
       updateStatusbar(); updateKpis(); renderSpark();
-      renderInjections(); updateStatusBar();
+      renderInjections(); updateStatusBar(); syncTopoComm();
     } else if (m.type === 'alarm') {
       const a = m.alarm || {};
       if (m.event === 'triggered') {
@@ -454,6 +454,7 @@ function loadTab(name) {
   ({
     trend: loadTrend, water: loadWaterTrend, energy: loadEnergy, alarms: loadAlarms,
     workorders: loadWos, devices: () => { loadDevices(); loadRules(); }, api: loadSettings,
+    topology: loadTopology, cmms: loadCmms,
   }[name] || (() => {}))();
 }
 
@@ -1154,6 +1155,36 @@ function copyApiDoc() {
 /* ---------- 绑定 ---------- */
 function bind() {
   bindPanelTabs();
+  // v0.6.0 Modbus / CMMS
+  const on = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = fn; };
+  on('btnMbCsv', exportMbCsv);
+  on('btnMbPoll', () => mbPoll('poll'));
+  on('btnMbCrc', () => mbPoll('crc_error'));
+  const mf = document.getElementById('mbFilter');
+  if (mf) mf.onchange = () => { S_MB.filter = mf.value; renderMbPoints(); };
+  on('btnInsLoad', loadChecklist);
+  on('btnInsSubmit', submitInspection);
+  on('btnDefNew', async () => {
+    const title = document.getElementById('defNewTitle').value.trim();
+    if (!title) return toast('请填缺陷标题', 'warn');
+    await api('/api/cmms/defect', {method:'POST', body:JSON.stringify({title, level:document.getElementById('defNewLevel').value, device_id:'meter-main'})});
+    document.getElementById('defNewTitle').value = '';
+    loadCmms(); toast('缺陷已登记并同步 ERP 通知单');
+  });
+  on('btnTkPrint', () => {
+    const t = S_CMMS.tickets[S_CMMS.curTicket]; if (!t) return;
+    const rows = [['票号','任务','操作人','监护人','值班负责人','状态'], [t.ticket_no,t.title,t.operator,t.guardian,t.duty_leader,t.status], [], ['序号','操作项目','状态','执行时间']];
+    (t.steps||[]).forEach(s => rows.push([s.n, s.txt, s.done?'已执行':'待唱票', s.at||'']));
+    downloadCsv(`${t.ticket_no}-操作票.csv`, rows);
+  });
+  on('btnErpCsv', () => {
+    const v = S_CMMS.voucher; if (!v) return;
+    const rows = [['凭证号','日期','摘要','科目','借方','贷方']];
+    v.lines.forEach(l => rows.push([v.voucher_no,v.date,v.summary,l.account,l.debit,l.credit]));
+    downloadCsv(`${v.voucher_no}-ERP凭证.csv`, rows);
+  });
+  const tks = document.getElementById('tkSelect');
+  if (tks) tks.onchange = () => { S_CMMS.curTicket = +tks.value; renderTicket(); };
   const csvBtn = document.getElementById('btnCsv'); if (csvBtn) csvBtn.onclick = exportCsv;
   const copyBtn = document.getElementById('btnCopyApi'); if (copyBtn) copyBtn.onclick = copyApiDoc;
   document.querySelectorAll('nav#tabs button').forEach(b => b.onclick = () => switchTab(b.dataset.tab));
@@ -1274,3 +1305,339 @@ function bind() {
   setInterval(() => { if (curTab === 'trend') loadTrend(); }, 60_000);
   setInterval(() => { if (curTab === 'water') loadWaterTrend(); }, 30_000);
 })();
+
+/* ==================================================================
+ * v0.6.0  Modbus 与拓扑 / 光储运维 CMMS
+ * ================================================================== */
+const TOPO_SVG = `
+<svg id="topoSvg" viewBox="0 0 1280 430" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="tcard" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#16213a"/><stop offset="1" stop-color="#0b1220"/></linearGradient>
+    <linearGradient id="tcrown" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#06B6D4"/><stop offset="1" stop-color="#10B981"/></linearGradient>
+    <filter id="tshadow" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#000" flood-opacity=".5"/></filter>
+    <marker id="tarrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0 0 L6 3 L0 6 Z" fill="#22D3EE"/></marker>
+    <marker id="tarrowA" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0 0 L6 3 L0 6 Z" fill="#F59E0B"/></marker>
+  </defs>
+  <style>
+    .tb{fill:#0e1729;stroke:#1E293B;stroke-width:1}
+    .tbl{fill:#64748B;font-size:10px;font-weight:700;letter-spacing:1px}
+    .tn{fill:url(#tcard);stroke:#334155;stroke-width:1.2;filter:url(#tshadow)}
+    .tnm{fill:#F8FAFC;font-size:12px;font-weight:700}
+    .tns{fill:#94A3B8;font-size:10px}
+    .tnc{fill:#64748B;font-size:9.5px}
+    .tw{stroke:#F59E0B;stroke-width:2;fill:none}
+    .tt{stroke:#22D3EE;stroke-width:2;stroke-dasharray:8 6;fill:none;animation:dashmove 1.2s linear infinite}
+    .te{stroke:#10B981;stroke-width:1.6;fill:none}
+    .wl{fill:#F59E0B;font-size:9.5px}
+    .tl{fill:#22D3EE;font-size:9.5px}
+    .node-dot{fill:#10B981}
+    .topo-node:hover .tn{stroke:#22D3EE}
+    .topo-node.dim{opacity:.3}
+    .topo-node.offline .node-dot{fill:#EF4444;animation:pulseDot .7s infinite}
+  </style>
+  <rect width="1280" height="430" fill="#090D16"/>
+  <!-- ===== Band L4/L3 ===== -->
+  <rect class="tb" x="8" y="10" width="1264" height="68" rx="8"/>
+  <rect x="8" y="10" width="4" height="68" fill="#a78bfa" rx="2"/>
+  <text class="tbl" x="18" y="27">L4 / L3  企业层 · IT 网 10.10.0.0/16</text>
+  <g class="topo-node" data-node="erp"><rect class="tn" x="190" y="20" width="250" height="48" rx="7"/><rect x="190" y="20" width="250" height="3" rx="1.5" fill="#a78bfa"/><text class="tnm" x="202" y="40">ERP 财务总账</text><text class="tns" x="202" y="56">SAP / NetSuite / ERPNext · 峰平谷电费月结</text><circle class="node-dot" cx="428" cy="60" r="3.5"/></g>
+  <g class="topo-node" data-node="cmms"><rect class="tn" x="470" y="20" width="250" height="48" rx="7"/><rect x="470" y="20" width="250" height="3" rx="1.5" fill="#a78bfa"/><text class="tnm" x="482" y="40">CMMS 维保系统</text><text class="tns" x="482" y="56">Webhook → 缺陷通知单 / 备件扣减</text><circle class="node-dot" cx="708" cy="60" r="3.5"/></g>
+  <g class="topo-node" data-node="mes"><rect class="tn" x="750" y="20" width="230" height="48" rx="7"/><rect x="750" y="20" width="230" height="3" rx="1.5" fill="#a78bfa"/><text class="tnm" x="762" y="40">MES 生产执行</text><text class="tns" x="762" y="56">工单 / 排产 / 设备台账</text><circle class="node-dot" cx="968" cy="60" r="3.5"/></g>
+  <text class="tnc" x="1000" y="42">REST Open API (X-API-Token)</text><text class="tnc" x="1000" y="58">Webhook / CSV 电费结算单</text>
+  <!-- ===== Band DMZ ===== -->
+  <rect class="tb" x="8" y="86" width="1264" height="56" rx="8" stroke="#7c2d2d" stroke-dasharray="6 4"/>
+  <rect x="8" y="86" width="4" height="56" fill="#EF4444" rx="2"/>
+  <text class="tbl" x="18" y="103">L3.5  工业防火墙 / IT-OT DMZ 隔离带</text>
+  <g class="topo-node" data-node="fw"><rect class="tn" x="190" y="92" width="500" height="42" rx="7" stroke="#7c2d2d"/><text class="tnm" x="202" y="110" fill="#FCA5A5">工业防火墙 · 白名单仅放行 TCP 8018 北向 API</text><text class="tns" x="202" y="126">严禁外网直连 VLAN 10 / 20 现场设备与 :502 端口</text></g>
+  <text class="tnc" x="710" y="110">南北向：HTTPS REST / Webhook</text><text class="tnc" x="710" y="126">单向隔离 · 无现场设备直连</text>
+  <line class="te" x1="640" y1="78" x2="640" y2="92" marker-end="url(#tarrow)"/>
+  <!-- ===== Band L3 SCADA ===== -->
+  <rect class="tb" x="8" y="150" width="1264" height="68" rx="8"/>
+  <rect x="8" y="150" width="4" height="68" fill="#22D3EE" rx="2"/>
+  <text class="tbl" x="18" y="167">L2 / L3  SCADA &amp; EMS 核心主站 · VLAN30 192.168.30.0/24</text>
+  <g class="topo-node" data-node="scada"><rect class="tn" x="190" y="158" width="300" height="50" rx="7"/><rect x="190" y="158" width="300" height="3" rx="1.5" fill="url(#tcrown)"/><text class="tnm" x="202" y="178">EnergySentinel 采集与告警引擎</text><text class="tns" x="202" y="195">Rust :8018 · Modbus 主站 / SSE / 开放 API</text><circle class="node-dot" cx="478" cy="200" r="3.5" id="tn-scada"/></g>
+  <g class="topo-node" data-node="db"><rect class="tn" x="510" y="158" width="250" height="50" rx="7"/><rect x="510" y="158" width="250" height="3" rx="1.5" fill="url(#tcrown)"/><text class="tnm" x="522" y="178">PostgreSQL 时序库</text><text class="tns" x="522" y="195">:5436 · readings / alarms / CMMS</text><circle class="node-dot" cx="748" cy="200" r="3.5"/></g>
+  <line class="te" x1="490" y1="183" x2="510" y2="183"/>
+  <line class="te" x1="640" y1="142" x2="640" y2="158" marker-end="url(#tarrow)"/>
+  <line class="te" x1="340" y1="218" x2="340" y2="228" marker-end="url(#tarrow)"/>
+  <!-- ===== Band L2 switch / gateway ===== -->
+  <rect class="tb" x="8" y="228" width="1264" height="80" rx="8"/>
+  <rect x="8" y="228" width="4" height="80" fill="#F59E0B" rx="2"/>
+  <text class="tbl" x="18" y="245">L2 工业环网交换机 (VLAN 隔离)  /  L1.5 边缘接入与协议转换</text>
+  <g class="topo-node" data-node="sw"><rect class="tn" x="190" y="252" width="220" height="48" rx="7"/><text class="tnm" x="202" y="271">三层工业环网交换机</text><text class="tns" x="202" y="288">Modbus-TCP :502 / OPC UA :4840</text></g>
+  <g class="topo-node" data-node="vlan10"><rect class="tn" x="424" y="252" width="210" height="48" rx="7" stroke="#F59E0B"/><text class="tnm" x="436" y="271">VLAN 10 配电控制网</text><text class="tns" x="436" y="288">192.168.10.0/24</text></g>
+  <g class="topo-node" data-node="vlan20"><rect class="tn" x="648" y="252" width="210" height="48" rx="7" stroke="#10B981"/><text class="tnm" x="660" y="271">VLAN 20 光储新能源网</text><text class="tns" x="660" y="288">192.168.20.0/24</text></g>
+  <g class="topo-node" data-node="gw"><rect class="tn" x="872" y="252" width="300" height="48" rx="7"/><text class="tnm" x="884" y="271">工业串口服务器 / 边缘网关 USR-N540</text><text class="tns" x="884" y="288">RTU→TCP 透明转换 + 断网环形队列缓存</text></g>
+  <line class="tt" x1="410" y1="276" x2="424" y2="276"/><line class="tt" x1="634" y1="276" x2="648" y2="276"/><line class="tt" x1="858" y1="276" x2="872" y2="276"/>
+  <text class="tl" x="190" y="246">Modbus-TCP (:502) 青色流动虚线</text>
+  <line class="te" x1="340" y1="228" x2="340" y2="252" marker-end="url(#tarrow)"/>
+  <!-- ===== Band L0/L1 field ===== -->
+  <rect class="tb" x="8" y="316" width="1264" height="106" rx="8"/>
+  <rect x="8" y="316" width="4" height="106" fill="#10B981" rx="2"/>
+  <text class="tbl" x="18" y="333">L0 / L1  现场设备与传感层</text>
+  <g class="topo-node" data-node="pv-inv-01"><rect class="tn" x="24" y="342" width="290" height="68" rx="7"/><rect x="24" y="342" width="290" height="3" rx="1.5" fill="#F59E0B"/><text class="tnm" x="36" y="360">光伏逆变器 PV-INV-01 (SG110CX)</text><text class="tns" x="36" y="375">Slave 0x11 (17) · RS485-Bus2</text><text class="tnc" x="36" y="390">04H 读输入 · 0x3000/0x3004/0x301A</text><text class="tnc" x="36" y="403">Modbus-RTU 9600,8,N,1</text><circle class="node-dot" cx="300" cy="402" r="3.5" id="tn-pv"/></g>
+  <g class="topo-node" data-node="adl400"><rect class="tn" x="326" y="342" width="290" height="68" rx="7"/><rect x="326" y="342" width="290" height="3" rx="1.5" fill="#F59E0B"/><text class="tnm" x="338" y="360">安科瑞 ADL400 电表群 ×5</text><text class="tns" x="338" y="375">Slave 0x01~0x05 · RS485-Bus1</text><text class="tnc" x="338" y="390">03H 读保持 · 0x2000/0x2012/0x2100</text><text class="tnc" x="338" y="403">进线总表 + 4 条 0.4kV 分回路</text><circle class="node-dot" cx="602" cy="402" r="3.5" id="tn-adl400"/></g>
+  <g class="topo-node" data-node="bms"><rect class="tn" x="628" y="342" width="290" height="68" rx="7"/><rect x="628" y="342" width="290" height="3" rx="1.5" fill="#10B981"/><text class="tnm" x="640" y="360">储能 BMS-01 / PCS-01</text><text class="tns" x="640" y="375">192.168.20.21~22:502 · Unit 1/2</text><text class="tnc" x="640" y="390">03H / 06H · 0x0100 SOC / 0x0210 p_set</text><text class="tnc" x="640" y="403">工业以太网 Modbus-TCP</text><circle class="node-dot" cx="904" cy="402" r="3.5" id="tn-bms"/></g>
+  <g class="topo-node" data-node="plc"><rect class="tn" x="930" y="342" width="326" height="68" rx="7"/><rect x="930" y="342" width="326" height="3" rx="1.5" fill="#10B981"/><text class="tnm" x="942" y="360">汇川 PLC Easy521 &amp; 变频供水泵</text><text class="tns" x="942" y="375">Slave 10 · 恒压供水 PI 闭环</text><text class="tnc" x="942" y="390">Modbus-TCP / OPC UA :4840</text><text class="tnc" x="942" y="403">压力变送器 PT → VFD → 水泵电机</text><circle class="node-dot" cx="1242" cy="402" r="3.5" id="tn-plc"/></g>
+  <!-- RS485 琥珀实线 + TCP 青虚线 -->
+  <line class="tw" x1="169" y1="342" x2="169" y2="308" marker-end="url(#tarrowA)"/>
+  <line class="tw" x1="471" y1="342" x2="471" y2="308" marker-end="url(#tarrowA)"/>
+  <text class="wl" x="24" y="336">RS485 手拉手菊花链 RVSP 2×0.75mm² + 两端 120Ω 终端电阻</text>
+  <line class="tt" x1="1022" y1="342" x2="1022" y2="300"/>
+  <text class="tl" x="930" y="336">Modbus-TCP :502 / OPC UA :4840</text>
+  <!-- 图例 -->
+  <text class="tnc" x="1000" y="420">● 正常通信   ● 断链告警   ─ RTU 琥珀实线   ┄ TCP 青色流动虚线</text>
+</svg>`;
+
+let S_MB = { points: [], logs: [], filter: '' };
+let S_CMMS = { inspections: [], defects: [], tickets: [], curTicket: 0, voucher: null };
+const CHECK_ITEMS = {
+  '光伏阵列与逆变器区': ['组件热斑 (红外测温)', 'MC4 接头紧固无发黑', '直流浪涌保护器窗口', '逆变器风扇防尘网', 'IGBT 温度', '并网有功'],
+  '储能集装箱 BMS/PCS': ['簇间压差 <25mV', '液冷管路无凝露', '七氟丙烷压力绿区', 'PCS 绝缘阻抗', 'SOC 荷电状态', '消防告警回路自检'],
+  '0.4kV 低压配电室': ['母排红外测温 <65℃', '电容补偿柜投切', 'ADL400 通信灯', '柜体接地', '开关机械指示'],
+};
+
+/* ---------- 页面 A：Modbus 与拓扑 ---------- */
+function renderTopoSvg() {
+  const host = document.getElementById('topoSvgHost');
+  if (!host || host.dataset.done) return;
+  host.innerHTML = TOPO_SVG;
+  host.dataset.done = '1';
+  host.querySelectorAll('.topo-node').forEach(g => {
+    g.onclick = () => {
+      const n = g.dataset.node || '';
+      S_MB.filter = (S_MB.filter === n) ? '' : n;
+      document.getElementById('mbFilter').value = S_MB.filter;
+      host.querySelectorAll('.topo-node').forEach(x => x.classList.toggle('dim', S_MB.filter && x.dataset.node !== S_MB.filter));
+      renderMbPoints();
+    };
+  });
+}
+function syncTopoComm() {
+  const main = S.devices['meter-main'];
+  const off = main && main._comm === false;
+  const adl = document.querySelector('.topo-node[data-node="adl400"]');
+  if (adl) adl.classList.toggle('offline', !!off);
+  const pv = document.querySelector('.topo-node[data-node="pv-inv-01"]');
+  const pvo = S.devices['pv-inv-01'] && S.devices['pv-inv-01']._comm === false;
+  if (pv) pv.classList.toggle('offline', !!pvo);
+}
+function hexColorize(tx) {
+  const parts = tx.split(' ');
+  return parts.map((p, i) => {
+    const cls = i === 0 ? 'hex-slave' : i === 1 ? 'hex-fc'
+      : (i === parts.length - 2 || i === parts.length - 1) ? 'hex-crc'
+      : i >= 4 ? 'hex-data' : 'hex-addr';
+    return `<span class="${cls}">${esc(p)}</span>`;
+  }).join(' ');
+}
+function renderMbPoints() {
+  const host = document.getElementById('mbPoints'); if (!host) return;
+  const rows = S_MB.points.filter(p => !S_MB.filter || p.device_id === S_MB.filter || p.device_name.includes(S_MB.filter));
+  if (!rows.length) { host.innerHTML = '<p class="muted">暂无点表数据</p>'; return; }
+  host.innerHTML = `<table><thead><tr><th>设备 / 角色</th><th>协议 · 从站</th><th>FC</th><th>寄存器 Hex(Dec)</th><th>类型 / 字节序</th><th>Scale</th><th>原始值 (Dec / Hex)</th><th>工程值</th></tr></thead><tbody>` +
+    rows.map(p => `<tr>
+      <td><b>${esc(p.device_name)}</b><br><span class="muted">${esc(p.device_id)} · ${esc(p.metric)}</span></td>
+      <td>${esc(p.proto)}<br><span class="muted">${esc(p.meta?.slave != null ? 'Slave ' + p.meta.slave : (p.meta?.ip || ''))} ${esc(p.rw)}</span></td>
+      <td><code>${esc(p.fc)}</code></td>
+      <td class="num">${esc(p.reg_hex)} (${p.reg_dec})</td>
+      <td>${esc(p.dtype)} / ${esc(p.endian)}</td>
+      <td class="num">×${p.scale}</td>
+      <td class="num">${p.raw_int} · ${esc(p.raw_hex)}</td>
+      <td class="num" style="color:#22D3EE">${p.eng_value} ${esc(p.unit)}</td>
+    </tr>`).join('') + '</tbody></table>';
+}
+function renderMbSniffer() {
+  const host = document.getElementById('mbSniffer'); if (!host) return;
+  const lines = S_MB.logs.slice(0, 8).map(l => {
+    const ok = l.status === 'ok';
+    return `<span class="hex-note">[${fdate(new Date(l.ts).getTime())}] ${esc(l.device_id||'')} ${esc(l.proto||'')} ${esc(l.fault_stage||'')} ${l.latency_ms}ms</span>\n` +
+      `<span class="hex-note">TX▶</span> ${hexColorize(l.tx_hex||'')}\n` +
+      `<span class="hex-note">RX◀</span> ${ok ? hexColorize(l.rx_hex||'') : `<span class="hex-crc">${esc(l.rx_hex||'')}</span>`}` +
+      (ok ? '' : `\n<span class="hex-crc">⚠ ${esc(l.handling_note||'')}</span>`);
+  });
+  host.innerHTML = lines.join('\n<span class="hex-note">────────────────────────────────</span>\n') || '<span class="hex-note">等待报文…</span>';
+}
+function renderMbLogs() {
+  const host = document.getElementById('mbLogs'); if (!host) return;
+  if (!S_MB.logs.length) { host.innerHTML = '<p class="muted">暂无排障记录</p>'; return; }
+  host.innerHTML = `<table><thead><tr><th>时间</th><th>设备</th><th>阶段</th><th>状态</th><th>耗时</th><th>处置措施</th></tr></thead><tbody>` +
+    S_MB.logs.map(l => `<tr>
+      <td class="num">${fdate(new Date(l.ts).getTime())}</td><td>${esc(l.device_id||'')}</td>
+      <td>${esc(l.fault_stage||'')}</td>
+      <td><span class="sev ${l.status==='ok'?'info':l.status==='timeout'?'critical':'warning'}">${esc(l.status)}</span></td>
+      <td class="num">${l.latency_ms}ms</td><td class="muted">${esc(l.handling_note||'')}</td>
+    </tr>`).join('') + '</tbody></table>';
+}
+async function loadTopology() {
+  renderTopoSvg(); syncTopoComm();
+  try {
+    const d = await api('/api/modbus/overview');
+    S_MB.points = d.points || []; S_MB.logs = d.logs || [];
+    const sel = document.getElementById('mbFilter');
+    const devs = [...new Set(S_MB.points.map(p => p.device_id))];
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">全部设备</option>' + devs.map(id => `<option value="${esc(id)}">${esc(id)}</option>`).join('');
+    sel.value = cur;
+    renderMbPoints(); renderMbSniffer(); renderMbLogs();
+  } catch (e) { toast('加载 Modbus 点表失败: ' + e.message, 'warn'); }
+}
+function exportMbCsv() {
+  const rows = [['device_id','device_name','metric','proto','fc','reg_hex','reg_dec','dtype','endian','scale','raw_int','raw_hex','eng_value','unit','tx_hex','rx_hex']];
+  S_MB.points.filter(p => !S_MB.filter || p.device_id === S_MB.filter)
+    .forEach(p => rows.push([p.device_id,p.device_name,p.metric,p.proto,p.fc,p.reg_hex,p.reg_dec,p.dtype,p.endian,p.scale,p.raw_int,p.raw_hex,p.eng_value,p.unit,p.tx_hex,p.rx_hex]));
+  downloadCsv('modbus-points.csv', rows);
+}
+function downloadCsv(name, rows) {
+  const csv = '\uFEFF' + rows.map(r => r.map(x => `"${String(x ?? '').replaceAll('"','""')}"`).join(',')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv;charset=utf-8'}));
+  a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+async function mbPoll(mode) {
+  try {
+    const r = await api('/api/modbus/log', { method:'POST', body: JSON.stringify({ mode, device_id:'meter-main' }) });
+    toast(mode === 'crc_error' ? '已注入 CRC 误码排障记录' : '已模拟一帧 03H 轮询');
+    const d = await api('/api/modbus/overview');
+    S_MB.logs = d.logs || []; renderMbSniffer(); renderMbLogs();
+  } catch (e) { toast(e.message, 'warn'); }
+}
+
+/* ---------- 页面 B：光储运维 CMMS ---------- */
+function renderFlowBar() {
+  const host = document.getElementById('cmmsFlow'); if (!host) return;
+  host.innerHTML = [
+    ['1','光伏/储能标准巡检'],['2','缺陷立项 (三级)'],['3','倒闸隔离操作票'],['4','CMMS 工单消缺'],['5','日报/月报入 ERP 总账'],
+  ].map(([n,s],i) => `<span class="flow-step"><b>${n}</b> ${s}</span>${i<4?'<span class="flow-arrow">→</span>':''}`).join('');
+}
+function renderInspections() {
+  const hist = document.getElementById('insHistory'); if (!hist) return;
+  hist.innerHTML = S_CMMS.inspections.length ? `<table><thead><tr><th>编号</th><th>区域</th><th>巡检人/班次</th><th>日期</th><th>异常项</th><th>ERP</th></tr></thead><tbody>` +
+    S_CMMS.inspections.map(x => `<tr><td class="num">${esc(x.code)}</td><td>${esc(x.area)}</td><td>${esc(x.inspector)} / ${esc(x.shift)}</td><td>${esc(x.check_date)}</td>
+      <td><span class="sev ${x.abnormal_count>0?'warning':'info'}">${x.abnormal_count}</span></td><td>${esc(x.erp_sync_status)}</td></tr>`).join('') + '</tbody></table>'
+    : '<p class="muted">暂无巡检单</p>';
+}
+function loadChecklist() {
+  const area = document.getElementById('insArea').value;
+  const items = CHECK_ITEMS[area] || [];
+  const host = document.getElementById('insChecklist'); if (!host) return;
+  host.innerHTML = items.map((k,i) => `<div class="ck-row" id="ckr-${i}">
+    <input type="checkbox" id="ck-${i}" checked title="取消勾选=异常需消缺">
+    <label for="ck-${i}">${esc(k)}</label>
+    <input type="text" id="ckv-${i}" value="正常" placeholder="实测值">
+  </div>`).join('');
+  host.querySelectorAll('input[type=checkbox]').forEach(cb => cb.onchange = () => {
+    const row = document.getElementById('ckr-' + cb.id.split('-')[1]);
+    row.classList.toggle('abn', !cb.checked);
+  });
+}
+function renderDefects() {
+  const sum = document.getElementById('defSummary');
+  const ds = S_CMMS.defects;
+  if (sum) {
+    const c = l => ds.filter(x => x.level === l).length;
+    const closed = ds.filter(x => x.status === 'closed').length;
+    sum.innerHTML = [
+      ['危急 24h', c('critical'), '#FCA5A5'], ['严重 72h', c('major'), '#FCD34D'], ['一般 月度', c('minor'), '#BFDBFE'],
+      ['消缺闭环率', (ds.length ? (closed/ds.length*100).toFixed(0) : 0) + '%', '#6EE7B7'],
+      ['ERP 通知单', ds.filter(x=>x.erp_notif_no).length, '#a5f3fc'], ['工单关联', ds.filter(x=>x.wo_id).length, '#a5f3fc'],
+    ].map(([k,v,col]) => `<div class="sumcard"><div class="t">${k}</div><div class="v num" style="color:${col}">${v}</div></div>`).join('');
+  }
+  const host = document.getElementById('defTable'); if (!host) return;
+  host.innerHTML = ds.length ? ds.map(x => `<div class="def-row">
+    <div class="hd"><span class="ck-badge ${esc(x.level)}">${{critical:'危急',major:'严重',minor:'一般'}[x.level]||x.level}</span>
+      <b>${esc(x.code)}</b><span class="muted">${esc(x.device_id)} · ${esc(x.category)}</span>
+      <span class="st ${esc(x.status)}" style="margin-inline-start:auto">${esc(x.status)}</span></div>
+    <div class="body"><b>${esc(x.title)}</b><br>现象：${esc(x.phenomenon)}<br>根因：${esc(x.root_cause)} · 措施：${esc(x.action_taken)}<br>
+      <span class="muted">CMMS 工单 #${x.wo_id ?? '--'} · ERP ${esc(x.erp_notif_no||'--')}</span></div>
+    <div class="controls" style="margin:6px 0 0">
+      ${x.status==='open'?`<button class="btn sm" onclick="defStatus(${x.id},'processing')">转工单</button>`:''}
+      ${x.status!=='closed'?`<button class="btn sm" onclick="defStatus(${x.id},'closed')">标记消缺完成</button>`:''}
+    </div></div>`).join('') : '<p class="muted">暂无缺陷</p>';
+}
+async function defStatus(id, status) {
+  await api('/api/cmms/defect/status', {method:'POST', body:JSON.stringify({id,status})});
+  loadCmms(); toast('缺陷状态已更新');
+}
+function renderTicketSelect() {
+  const sel = document.getElementById('tkSelect'); if (!sel) return;
+  sel.innerHTML = S_CMMS.tickets.map((t,i) => `<option value="${i}">${esc(t.ticket_no)} · ${esc(t.title)}</option>`).join('');
+  if (S_CMMS.curTicket >= S_CMMS.tickets.length) S_CMMS.curTicket = 0;
+  sel.value = String(S_CMMS.curTicket);
+  renderTicket();
+}
+function renderTicket() {
+  const t = S_CMMS.tickets[S_CMMS.curTicket];
+  const hd = document.getElementById('tkHeader'), st = document.getElementById('tkSteps');
+  if (!t || !hd || !st) return;
+  hd.innerHTML = `<b>票号：</b>${esc(t.ticket_no)}　<b>任务：</b>${esc(t.title)}<br>
+    <b>操作人：</b>${esc(t.operator)}　<b>监护人：</b>${esc(t.guardian)}　<b>值班负责人：</b>${esc(t.duty_leader)}　<b>状态：</b><span class="st ${esc(t.status)}">${esc(t.status)}</span><br>
+    <b>目标设备：</b>${esc(t.target_device)}　<b>五防校核：</b>${(t.safety_checks||[]).filter(x=>x.ok).length}/${(t.safety_checks||[]).length} 项通过`;
+  st.innerHTML = (t.steps || []).map(s => `<div class="tk-step ${s.done?'done':''}">
+    <span class="n">${s.done?'✓':s.n}</span>
+    <span class="txt">${esc(s.txt)}${s.at?`<br><span class="at">唱票 ${esc(s.sung_by||'')} · 监护复诵 ${esc(s.guardian||'')} · ${fdate(new Date(s.at).getTime())}</span>`:''}</span>
+    ${s.done?'':`<button class="btn sm" onclick="ticketStep(${s.n})">唱票→执行</button>`}
+  </div>`).join('');
+}
+async function ticketStep(n) {
+  const t = S_CMMS.tickets[S_CMMS.curTicket]; if (!t) return;
+  await api('/api/cmms/ticket/step', {method:'POST', body:JSON.stringify({id:t.id,n,operator:t.operator,guardian:t.guardian})});
+  loadCmms(); toast('已唱票、监护复诵并确认执行');
+}
+function renderErpVoucher() {
+  const d = S.todayBuckets || {};
+  const tariff = S.tariff || {peak:1.0,flat:0.62,valley:0.32};
+  const pk=(d.peak_kwh||0), fl=(d.flat_kwh||0), vl=(d.valley_kwh||0);
+  const cost = pk*tariff.peak + fl*tariff.flat + vl*tariff.valley;
+  const pvKwh = 42.6, pvSave = pvKwh*0.72;
+  const essKwh = 31.2, essNet = essKwh*(tariff.peak - tariff.valley);
+  const v = {
+    voucher_no: 'ERP-GL-' + new Date().toISOString().slice(0,10).replaceAll('-',''),
+    date: new Date().toISOString().slice(0,10),
+    summary: '光储荷微网关口电费与峰谷套利结转',
+    lines: [
+      {account:'制造费用-电费(峰)', debit:+((pk*tariff.peak).toFixed(2)), credit:0},
+      {account:'制造费用-电费(平)', debit:+((fl*tariff.flat).toFixed(2)), credit:0},
+      {account:'制造费用-电费(谷)', debit:+((vl*tariff.valley).toFixed(2)), credit:0},
+      {account:'应付账款-供电局', debit:0, credit:+(cost.toFixed(2))},
+      {account:'制造费用-光伏自发自用节约', debit:0, credit:+pvSave.toFixed(2)},
+      {account:'其他收益-储能峰谷套利', debit:0, credit:+essNet.toFixed(2)},
+    ],
+    metrics: {grid_import_kwh:+(pk+fl+vl).toFixed(1), pv_self_use_kwh:pvKwh, ess_arbitrage_kwh:essKwh},
+  };
+  S_CMMS.voucher = v;
+  const sum = document.getElementById('erpSummary');
+  if (sum) sum.innerHTML = [
+    ['关口买电', `${(pk+fl+vl).toFixed(1)}<small class="unit"> kWh</small>`, '峰平谷合计'],
+    ['关口电费', `¥${cost.toFixed(2)}`, '借 制造费用-电费'],
+    ['光伏自发自用', `${pvKwh}<small class="unit"> kWh</small>`, `折算节电 ¥${pvSave.toFixed(2)}`],
+    ['储能峰谷套利', `${essKwh}<small class="unit"> kWh</small>`, `净收益 ¥${essNet.toFixed(2)}`],
+  ].map(([k,x,s]) => `<div class="sumcard"><div class="t">${k}</div><div class="v num" style="font-size:18px">${x}</div><div class="sub">${s}</div></div>`).join('');
+  const pre = document.getElementById('erpVoucher');
+  if (pre) pre.textContent = JSON.stringify(v, null, 2);
+}
+async function loadCmms() {
+  renderFlowBar();
+  if (!document.getElementById('insChecklist').children.length) loadChecklist();
+  try {
+    const d = await api('/api/cmms/overview');
+    S_CMMS.inspections = d.inspections || [];
+    S_CMMS.defects = d.defects || [];
+    S_CMMS.tickets = d.tickets || [];
+    renderInspections(); renderDefects(); renderTicketSelect(); renderErpVoucher();
+  } catch (e) { toast('加载 CMMS 数据失败: ' + e.message, 'warn'); }
+}
+async function submitInspection() {
+  const area = document.getElementById('insArea').value;
+  const inspector = document.getElementById('insInspector').value.trim() || 'ops';
+  const keys = CHECK_ITEMS[area] || [];
+  const items = keys.map((k,i) => ({
+    k, v: (document.getElementById('ckv-'+i)?.value || '正常'),
+    ok: document.getElementById('ck-'+i)?.checked !== false,
+  }));
+  const abn = items.filter(x => !x.ok).length;
+  await api('/api/cmms/inspection', {method:'POST', body:JSON.stringify({area,inspector,shift:'白班',items})});
+  toast(abn ? `巡检已提交，自动联动生成 ${abn} 条缺陷台账` : '巡检已提交并同步 CMMS');
+  loadCmms();
+}

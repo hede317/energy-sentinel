@@ -335,3 +335,50 @@ tbody tr:nth-child(even) td { background: rgba(255,255,255,.02); }
 .chart-tip .tr b { margin-inline-start: auto; font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
 .tou-mini { display: flex; height: 9px; border-radius: 5px; overflow: hidden; margin-top: 3px; }
 .tou-mini > i { display: block; height: 100%; }
+
+/* ===================== v0.6.0 Modbus 拓扑 / CMMS ===================== */
+.topo-grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 14px; align-items: start; }
+.tbl-scroll { overflow: auto; max-height: 460px; }
+.tbl-scroll table { font-size: 11.5px; }
+.tbl-scroll th { position: sticky; top: 0; z-index: 1; background: #121b30; }
+@media (max-width: 1100px) { .topo-grid { grid-template-columns: 1fr; } }
+.terminal { background: #060b14; border: 1px solid #1e293b; border-radius: 8px; color: #a5f3fc;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; line-height: 1.6;
+  padding: 10px 12px; max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+.hex-slave { color: #FCD34D; } .hex-fc { color: #f0abfc; } .hex-addr { color: #93c5fd; }
+.hex-data { color: #86efac; } .hex-crc { color: #FCA5A5; } .hex-note { color: #64748b; }
+#topoSvgHost svg { width: 100%; height: auto; display: block; }
+.topo-node { cursor: pointer; transition: opacity .2s; }
+.topo-node:hover { filter: brightness(1.25); }
+.topo-node.dim { opacity: .32; }
+.topo-node.offline .node-dot { fill: #EF4444 !important; animation: pulseDot .7s infinite; }
+.mb-filtered { display: none; }
+
+.cmms-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
+@media (max-width: 1100px) { .cmms-grid { grid-template-columns: 1fr; } }
+.flow-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; }
+.flow-step { padding: 5px 12px; border-radius: 999px; border: 1px solid #24304d; background: rgba(30,41,59,.5); color: var(--tx2); }
+.flow-step b { color: var(--accent); }
+.flow-arrow { color: var(--muted); }
+.checklist { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+.ck-row { display: flex; align-items: center; gap: 6px; background: rgba(15,23,42,.55); border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; font-size: 12px; }
+.ck-row label { flex: 1; min-width: 0; cursor: pointer; }
+.ck-row input[type=text] { width: 82px; padding: 2px 5px; font-size: 11px; }
+.ck-row.abn { border-color: rgba(239,68,68,.5); background: rgba(239,68,68,.07); }
+.ck-badge { font-size: 10px; padding: 1px 6px; border-radius: 4px; border: 1px solid #334155; white-space: nowrap; }
+.ck-badge.critical { color:#FCA5A5;border-color:rgba(239,68,68,.5); }
+.ck-badge.major { color:#FCD34D;border-color:rgba(245,158,11,.5); }
+.ck-badge.minor { color:#BFDBFE;border-color:rgba(96,165,250,.5); }
+.def-row { border-bottom: 1px dotted #1b2540; padding: 8px 4px; font-size: 12px; }
+.def-row .hd { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-bottom: 4px; }
+.def-row .body { color: var(--tx2); font-size: 11.5px; line-height: 1.6; }
+.tk-header { background: rgba(15,23,42,.6); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 12px; line-height: 1.8; margin-bottom: 10px; }
+.tk-header b { color: var(--tx); }
+.tk-steps { display: flex; flex-direction: column; gap: 6px; }
+.tk-step { display: flex; gap: 9px; align-items: flex-start; background: rgba(15,23,42,.5); border: 1px solid var(--line); border-left: 3px solid #334155; border-radius: 7px; padding: 8px 10px; font-size: 12px; }
+.tk-step.done { border-left-color: #10B981; }
+.tk-step .n { width: 20px; height: 20px; border-radius: 50%; background: #1e293b; color: var(--tx2); text-align: center; line-height: 20px; flex: none; font-size: 11px; font-weight: 700; }
+.tk-step.done .n { background: #10B981; color: #06202a; }
+.tk-step .txt { flex: 1; min-width: 0; }
+.tk-step .at { font-size: 10px; color: var(--muted); }
+.sumcard.peak { border-top-color: #f59e0b; } .sumcard.valley { border-top-color: #34d399; }

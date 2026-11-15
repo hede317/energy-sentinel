@@ -4,6 +4,8 @@ Rust 单二进制：**Modbus/OPC UA 采集 → PostgreSQL → 多语言看板 ·
 当前以仿真运行（工厂级配电场景 + 恒压供水 PLC 教学场景），硬件到位后切真实驱动，系统与数据链路零改动。
 分层定位与 L3/L4 接口见 `docs/ISA-95映射与L3L4接口.md`。
 
+> **面试作品集（v0.6.0）**：Modbus 点表与报文监视、IT/OT 五层网络拓扑、光储运维 CMMS 四大单据闭环的完整工程讲解与演示剧本，见 **[docs/面试作品集-Modbus点表与光储CMMS全链路.md](<docs/面试作品集-Modbus点表与光储CMMS全链路.md>)**。系统内对应「Modbus与拓扑」「光储运维(CMMS)」两个标签页，可现场演示。
+
 ## 运行 / Run
 
 - 服务：`http://127.0.0.1:8018`（launchd 常驻 `com.hedeyou.energy-sentinel`，日志 `/tmp/energy-sentinel.log`）

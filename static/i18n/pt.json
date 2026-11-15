@@ -128,5 +128,7 @@
   "modal.reason": "Motivo (opcional)",
   "modal.exec": "Executar",
   "modal.cancel": "Cancelar",
-  "modal.returncheck": "Verificação: {action} → {device}"
+  "modal.returncheck": "Verificação: {action} → {device}",
+  "nav.topology": "Modbus & Topologia",
+  "nav.cmms": "O&M PV/ESS (CMMS)"
 }
