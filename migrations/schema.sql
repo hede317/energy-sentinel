@@ -216,7 +216,7 @@ INSERT INTO comm_logs(ts,device_id,proto,slave_addr,func_code,reg_addr,tx_hex,rx
 SELECT * FROM (VALUES
   (now() - interval '9 minutes','meter-main','Modbus-RTU','0x01','03H','0x2000','01 03 20 00 00 02 CF CB','01 03 04 00 00 0E E6 7F D9',18,'ok','轮询正常','03H 读保持寄存器；原始 0x0EE6=3814 ×0.1=381.4V，CRC16 校验通过'),
   (now() - interval '8 minutes','pv-inv-01','Modbus-RTU','0x11','04H','0x3000','11 04 30 00 00 01 3C 5A','11 04 02 1C 0A F0 34',22,'ok','轮询正常','04H 读输入寄存器；直流母线 720.5V，网关 RTU→TCP 透明转发'),
-  (now() - interval '7 minutes','ess-pcs-01','Modbus-TCP','0x02','06H','0x0210','00 01 00 00 00 06 02 06 02 10 FB 20','00 01 00 00 00 06 02 06 02 10 FB 20',12,'ok','遥调成功','谷段写 p_set=-800 → -80.0kW 充电；MBAP 头无 CRC，功能码 06H 写单寄存器'),
+  (now() - interval '7 minutes','ess-pcs-01','Modbus-TCP','0x02','06H','0x0210','00 01 00 00 00 06 02 06 02 10 FC E0','00 01 00 00 00 06 02 06 02 10 FC E0',12,'ok','遥调成功','谷段写 p_set=-800 → -80.0kW 充电；MBAP 头无 CRC，功能码 06H 写单寄存器'),
   (now() - interval '6 minutes','meter-main','Modbus-RTU','0x01','03H','0x2000','01 03 20 00 00 02 CF CB','(无响应)',520,'timeout','Retry 1/3','Rx Timeout >500ms，检查 RS485 A+/B- 极性'),
   (now() - interval '5 minutes','meter-main','Modbus-RTU','0x01','03H','0x2000','01 03 20 00 00 02 CF CB','(无响应)',520,'timeout','Retry 3/3','连续 3 次超时；15s 通信看门狗触发 alarm.comm(CRITICAL)，冻结最后有效值并置灰 OFFLINE'),
   (now() - interval '4 minutes','meter-main','Modbus-RTU','0x01','03H','0x2000','01 03 20 00 00 02 CF CB','01 03 04 00 00 0E E2 7E 1A',19,'ok','Auto-Heal 自动恢复','现场排查：3# 表箱 RS485 B- 端子松动，紧固并补接 120Ω 终端电阻；收到合法 RX 帧自动消警')

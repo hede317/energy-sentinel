@@ -36,7 +36,7 @@ pub struct SimWorld {
 impl SimWorld {
     pub fn new() -> Self {
         let mut epi = std::collections::HashMap::new();
-        for (id, v) in [("meter-main", 15234.6), ("feeder-ac", 8321.4), ("feeder-im", 6604.0), ("feeder-lt", 3188.2), ("feeder-it", 2105.7), ("ws-pump", 512.8)] {
+        for (id, v) in [("meter-main", 15234.6), ("feeder-ac", 8321.4), ("feeder-im", 6604.0), ("feeder-lt", 3188.2), ("feeder-it", 2105.7), ("ws-pump", 512.8), ("pv-inv-01", 12846.3)] {
             epi.insert(id.to_string(), v);
         }
         Self {
@@ -299,28 +299,34 @@ impl SimWorld {
         let soc = 60.0 + 22.0 * ((t / 900.0) * std::f64::consts::PI).sin();
         let pcs_p = if is_valley { -40.0 } else if is_peak { 60.0 } else { 0.0 };
         let r1 = |v: f64| (v * 10.0).round() / 10.0;
-        let mk = |device: &str, extra: std::collections::HashMap<String, f64>| Snap {
+        // 先取通信状态，避免闭包借用 self 与下方 self.epi 的可变借用冲突
+        let comm_pv = self.comm_ok("pv-inv-01", t);
+        let comm_bms = self.comm_ok("ess-bms-01", t);
+        let comm_pcs = self.comm_ok("ess-pcs-01", t);
+        let mk = move |device: &str, comm: bool, extra: std::collections::HashMap<String, f64>| Snap {
             device: device.into(), ts, u: 0.0, i: 0.0, p: 0.0, q: 0.0, pf: 1.0, f: 50.0,
-            epi: 0.0, breaker: true, comm: true, extra,
+            epi: 0.0, breaker: true, comm, extra,
         };
         let mut pv = std::collections::HashMap::new();
         pv.insert("dc_u".into(), r1(710.0 + Self::noise(&mut rng, 2.0)));
         pv.insert("p".into(), r1(pv_p));
         pv.insert("temp".into(), r1(48.0 + Self::noise(&mut rng, 1.5)));
-        pv.insert("epi".into(), r1(pv_p * dt / 3600.0));
-        snaps.push(mk("pv-inv-01", pv));
+        let pv_epi = self.epi.entry("pv-inv-01".into()).or_insert(0.0);
+        *pv_epi += pv_p * dt / 3600.0;
+        pv.insert("epi".into(), (*pv_epi * 10.0).round() / 10.0);
+        snaps.push(mk("pv-inv-01", comm_pv, pv));
         let mut bms = std::collections::HashMap::new();
         bms.insert("soc".into(), r1(soc));
         bms.insert("soh".into(), 98.2);
         bms.insert("cell_dv".into(), ((18.0 + Self::noise(&mut rng, 3.0)) * 1000.0).round() / 1000.0);
         bms.insert("temp".into(), r1(29.0 + Self::noise(&mut rng, 1.0)));
-        snaps.push(mk("ess-bms-01", bms));
+        snaps.push(mk("ess-bms-01", comm_bms, bms));
         let mut pcs = std::collections::HashMap::new();
         pcs.insert("p".into(), pcs_p);
         pcs.insert("p_set".into(), pcs_p);
         pcs.insert("u".into(), 380.0);
         pcs.insert("f".into(), 50.0);
-        snaps.push(mk("ess-pcs-01", pcs));
+        snaps.push(mk("ess-pcs-01", comm_pcs, pcs));
         snaps
     }
 

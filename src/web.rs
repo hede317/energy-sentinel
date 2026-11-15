@@ -750,10 +750,10 @@ async fn sim_cmd(State(app): State<SharedApp>, Json(b): Json<Value>) -> Response
         // 断链注入 / 清除恢复 → 同步落一条采集排障记录（供 Modbus 报文台展示）
         if action == "comm_fault" || action == "clear" {
             let (tx, rx, status, stage, note, lat): (&str, &str, &str, &str, &str, i32) = if action == "comm_fault" {
-                ("01 03 20 00 00 02 CF CA", "(无响应)", "timeout", "Retry 3/3",
+                ("01 03 20 00 00 02 CF CB", "(无响应)", "timeout", "Retry 3/3",
                  "注入通信故障：连续 3 次 Rx Timeout>500ms，15s 看门狗触发 OFFLINE 告警，冻结最后有效值", 520)
             } else {
-                ("01 03 20 00 00 02 CF CA", "01 03 04 00 00 0E E6 F8 12", "ok", "Auto-Heal 自动恢复",
+                ("01 03 20 00 00 02 CF CB", "01 03 04 00 00 0E E6 7F D9", "ok", "Auto-Heal 自动恢复",
                  "清除故障注入：收到合法 RX 帧，CRC16 校验通过，链路自愈并自动消警", 18)
             };
             let _ = c.execute(
@@ -1085,7 +1085,7 @@ async fn modbus_log(State(app): State<SharedApp>, Json(b): Json<Value>) -> Respo
     let dev = b.get("device_id").and_then(|v| v.as_str()).unwrap_or("meter-main");
     let c = app.db.lock().await;
     let (tx, rx, status, stage, note, latency) = if mode == "crc_error" {
-        ("01 03 20 00 00 02 CF CA".to_string(), "01 03 04 00 00 0E E6 F8 13 (CRC 错)".to_string(),
+        ("01 03 20 00 00 02 CF CB".to_string(), "01 03 04 00 00 0E E6 7F D8 (CRC 错)".to_string(),
          "crc_error", "Retry 1/3", "注入一帧 CRC 校验错误：重发请求并核对 A+/B- 极性、120Ω 终端电阻与屏蔽层单端接地", 505)
     } else {
         (rtu_tx(1, 3, 0x2000, 2), rtu_rx(1, 3, 3814),
