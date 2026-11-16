@@ -22,6 +22,8 @@ pub type Latest = std::collections::HashMap<String, crate::collector::DevState>;
 
 pub struct Engine {
     pub rules: Vec<Rule>,
+    /// 设备→采集源声明（reload 时同步加载，告警盖章用）
+    pub sources: std::collections::HashMap<String, String>,
     pending: std::collections::HashMap<i32, i64>,   // rule_id -> cond 持续起始 epoch s
     fired: std::collections::HashMap<i32, i32>,     // rule_id -> 活跃 alarm id
     comm_fired: std::collections::HashMap<String, i32>,
@@ -60,13 +62,24 @@ pub async fn load_rules(db: &Db) -> Vec<Rule> {
 
 impl Engine {
     pub fn new() -> Self {
-        Self { rules: vec![], pending: Default::default(), fired: Default::default(), comm_fired: Default::default(), last_reload: 0, initialized: false, last_sync: 0 }
+        Self { rules: vec![], sources: Default::default(), pending: Default::default(), fired: Default::default(), comm_fired: Default::default(), last_reload: 0, initialized: false, last_sync: 0 }
     }
 
     pub async fn reload_if_stale(&mut self, db: &Db, force: bool) {
         let now = chrono::Utc::now().timestamp();
         if force || now - self.last_reload > 30 {
             self.rules = load_rules(db).await;
+            // 同步加载设备源声明（告警盖章：告警必须记得自己是从哪种数据里长出来的）
+            let c = db.lock().await;
+            let rows = c
+                .query("SELECT id, driver FROM devices WHERE enabled", &[])
+                .await
+                .unwrap_or_default();
+            drop(c);
+            self.sources = rows
+                .iter()
+                .map(|r| (r.get::<_, String>(0), r.get::<_, String>(1)))
+                .collect();
             self.last_reload = now;
         }
         if !self.initialized {
@@ -129,6 +142,7 @@ impl Engine {
             let Some(dev) = latest.get(&r.device_id) else { continue };
             if !dev.comm { continue; }
             let Some(v) = dev.values.get(&r.metric) else { continue };
+            let src = self.sources.get(&r.device_id).map(|s| s.as_str()).unwrap_or("sim");
 
             if self.cond(r, *v) {
                 let since = *self.pending.entry(r.id).or_insert(now);
@@ -136,7 +150,7 @@ impl Engine {
                     let aid = create_alarm(
                         db, tx, webhook,
                         Some(r.id), &r.device_id, &r.metric, &r.severity,
-                        &r.name_key, &r.name_en, *v, r.threshold,
+                        &r.name_key, &r.name_en, *v, r.threshold, src,
                     ).await;
                     self.fired.insert(r.id, aid);
                 }
@@ -153,11 +167,12 @@ impl Engine {
         // 通信看门狗：15s 无新鲜数据 → 通信中断告警
         for (dev_id, dev) in latest.iter() {
             let fresh = now * 1000 - dev.ts < 15_000;
+            let src = self.sources.get(dev_id).map(|s| s.as_str()).unwrap_or("sim");
             if !fresh && !dev.comm {
                 if !self.comm_fired.contains_key(dev_id) {
                     let aid = create_alarm(
                         db, tx, webhook, None, dev_id, "comm", "critical",
-                        "alarm.comm", "Communication lost", 0.0, 0.0,
+                        "alarm.comm", "Communication lost", 0.0, 0.0, src,
                     ).await;
                     self.comm_fired.insert(dev_id.clone(), aid);
                 }
@@ -174,10 +189,12 @@ fn alarm_json(
     id: i32, rule_id: Option<i32>, device: &str, metric: &str, severity: &str,
     message: &str, meta: serde_json::Value, value: f64, status: &str,
     triggered_at: chrono::DateTime<chrono::Utc>, closed_at: Option<chrono::DateTime<chrono::Utc>>,
+    source: &str,
 ) -> serde_json::Value {
     json!({
         "id": id, "rule_id": rule_id, "device_id": device, "metric": metric,
         "severity": severity, "message": message, "meta": meta, "value": round2(value),
+        "source": source,
         "status": status, "triggered_at": triggered_at.to_rfc3339(),
         "closed_at": closed_at.map(|t| t.to_rfc3339()),
     })
@@ -189,16 +206,16 @@ fn round2(v: f64) -> f64 { (v * 100.0).round() / 100.0 }
 pub async fn create_alarm(
     db: &Db, tx: &Sender<serde_json::Value>, webhook: &str,
     rule_id: Option<i32>, device: &str, metric: &str, severity: &str,
-    name_key: &str, name_en: &str, value: f64, threshold: f64,
+    name_key: &str, name_en: &str, value: f64, threshold: f64, source: &str,
 ) -> i32 {
     let message = format!("{name_en} [{device}] value={:.1}", round2(value));
     let meta = json!({"key": name_key, "params": {"device": device, "value": round2(value), "threshold": round2(threshold)}});
     let c = db.lock().await;
     let row = c
         .query_one(
-            "INSERT INTO alarms(rule_id,device_id,metric,severity,message,meta,value,status,triggered_at) \
-             VALUES($1,$2,$3,$4,$5,$6,$7,'active',now()) RETURNING id,triggered_at",
-            &[&rule_id, &device, &metric, &severity, &message, &meta, &value],
+            "INSERT INTO alarms(rule_id,device_id,metric,severity,message,meta,value,status,triggered_at,source) \
+             VALUES($1,$2,$3,$4,$5,$6,$7,'active',now(),$8) RETURNING id,triggered_at",
+            &[&rule_id, &device, &metric, &severity, &message, &meta, &value, &source],
         )
         .await;
     drop(c);
@@ -206,7 +223,7 @@ pub async fn create_alarm(
         Ok(r) => {
             let id: i32 = r.get(0);
             let trig: chrono::DateTime<chrono::Utc> = r.get(1);
-            let a = alarm_json(id, rule_id, device, metric, severity, &message, meta, value, "active", trig, None);
+            let a = alarm_json(id, rule_id, device, metric, severity, &message, meta, value, "active", trig, None, source);
             let _ = tx.send(json!({"type": "alarm", "event": "triggered", "alarm": a.clone()}));
             if !webhook.is_empty() {
                 fire_webhook(webhook, json!({"event": "alarm.triggered", "alarm": a}));

@@ -382,3 +382,24 @@ tbody tr:nth-child(even) td { background: rgba(255,255,255,.02); }
 .tk-step .txt { flex: 1; min-width: 0; }
 .tk-step .at { font-size: 10px; color: var(--muted); }
 .sumcard.peak { border-top-color: #f59e0b; } .sumcard.valley { border-top-color: #34d399; }
+
+/* ===================== v0.7.0 双源架构：实测/演示 诚实切换 ===================== */
+.srcseg { display: flex; border: 1px solid rgba(148,163,184,.35); border-radius: 9px; overflow: hidden; }
+.srcseg button { background: transparent; border: 0; color: #94A3B8; font-size: 12px; padding: 5px 11px; cursor: pointer; font-family: inherit; white-space: nowrap; }
+.srcseg button + button { border-left: 1px solid rgba(148,163,184,.25); }
+.srcseg button:hover { color: #E2E8F0; }
+.srcseg button.active { background: rgba(34,211,238,.14); color: #22D3EE; font-weight: 600; }
+.srcseg button.active[data-mode="live"] { background: rgba(16,185,129,.14); color: #34D399; }
+.srcbanner { display: flex; align-items: center; gap: 8px; padding: 5px 18px; font-size: 12px; border-bottom: 1px solid rgba(148,163,184,.15); background: rgba(148,163,184,.08); color: #94A3B8; min-height: 26px; }
+.srcbanner[data-mode="live"] { background: rgba(16,185,129,.10); color: #34D399; border-bottom-color: rgba(16,185,129,.35); }
+.srcbanner[data-mode="demo"] { background: rgba(59,130,246,.10); color: #60A5FA; border-bottom-color: rgba(59,130,246,.35); }
+.srcbadge { font-size: 10px; padding: 1px 7px; border-radius: 5px; font-weight: 600; letter-spacing: .3px; white-space: nowrap; }
+.srcbadge.live { background: rgba(16,185,129,.15); color: #34D399; border: 1px solid rgba(16,185,129,.4); }
+.srcbadge.demo { background: rgba(59,130,246,.15); color: #60A5FA; border: 1px solid rgba(59,130,246,.4); }
+/* 模式过滤：实测模式藏演示设备，演示模式藏实测/外推设备（诚实边界，CSS 硬隔离） */
+body.mode-live [data-src="sim"] { display: none !important; }
+body.mode-demo [data-src="rtu"], body.mode-demo [data-src="tcp"], body.mode-demo [data-src="ext"] { display: none !important; }
+/* 实测模式下仿真演练面板停用（后端同样拒绝，双保险） */
+body.mode-live .demo-bar { opacity: .45; pointer-events: none; }
+.sim-note { display: none; color: #F59E0B; font-size: 12px; margin-left: 8px; }
+body.mode-live .demo-bar .sim-note { display: inline; }

@@ -130,5 +130,16 @@
   "modal.cancel": "বাতিল",
   "modal.returncheck": "যাচাই: {action} → {device}",
   "nav.topology": "Modbus ও টপোলজি",
-  "nav.cmms": "PV/ESS অপারেশন (CMMS)"
+  "nav.cmms": "PV/ESS অপারেশন (CMMS)",
+  "src.all": "সব",
+  "src.live": "⚡ লাইভ",
+  "src.demo": "🔬 ডেমো",
+  "src.badge.live": "লাইভ",
+  "src.badge.demo": "ডেমো",
+  "src.banner.all": "মিশ্র ভিউ: ⚡ লাইভ ও 🔬 ডেমো ডেটা পাশাপাশি (ব্যাজ দেখুন); রিপোর্টে সূত্র অনুযায়ী বিভাজন",
+  "src.banner.live": "লাইভ মোড: শুধু প্রকৃত প্রোটোকলে যুক্ত ডিভাইস (Modbus / এক্সটার্নাল পুশ); ডেমো ডিভাইস লুকানো",
+  "src.banner.demo": "ডেমো মোড: শুধু সিমুলেটেড ডিভাইস; লাইভ ডিভাইস লুকানো",
+  "src.simnote": "লাইভ মোডে সিমুলেশন নিষ্ক্রিয় (ডেমো ট্রিগার লাইভ ডিভাইসে কাজ করে না)",
+  "energy.source": "সূত্র",
+  "energy.dualsplit": "সূত্রভিত্তিক বিভাজন"
 }

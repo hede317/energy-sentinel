@@ -255,3 +255,18 @@ SELECT * FROM (VALUES
    now()-interval '3 hours',NULL::timestamptz)
 ) AS s(ticket_no,title,task_mode,target_device,operator,guardian,duty_leader,status,steps,safety_checks,issued_at,finished_at)
 WHERE NOT EXISTS (SELECT 1 FROM switching_tickets);
+
+-- ===================== v0.7.0 双源架构（诚实 / 严实）=====================
+-- 原则：真实数据与演示数据物理隔离，绝不互相顶替。
+--   ① 盖章：readings/alarms 每行在产出瞬间记录 source（sim 演示 | rtu 实测 | ext 外推），
+--      事后改 devices.driver 不影响历史归属。
+ALTER TABLE readings ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'sim';
+ALTER TABLE alarms   ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'sim';
+CREATE INDEX IF NOT EXISTS idx_readings_src ON readings(source, ts DESC);
+--   ② 诚实修正（仅执行一次，真机接入日的 driver 切换不会被启动脚本回滚）：
+--      光储三台是"真机规划"，真机未接入前不得预挂 rtu/tcp 吃仿真数顶门面。
+INSERT INTO settings(k,v) VALUES('honest_fix_v070','pending') ON CONFLICT (k) DO NOTHING;
+UPDATE devices SET driver='sim'
+ WHERE id IN ('pv-inv-01','ess-bms-01','ess-pcs-01') AND driver IN ('rtu','tcp')
+   AND (SELECT v FROM settings WHERE k='honest_fix_v070')='pending';
+UPDATE settings SET v='done' WHERE k='honest_fix_v070';

@@ -130,5 +130,16 @@
   "modal.cancel": "Cancel",
   "modal.returncheck": "Verify: {action} → {device}",
   "nav.topology": "Modbus & Topology",
-  "nav.cmms": "PV/ESS O&M (CMMS)"
+  "nav.cmms": "PV/ESS O&M (CMMS)",
+  "src.all": "All",
+  "src.live": "⚡ Live",
+  "src.demo": "🔬 Demo",
+  "src.badge.live": "Live",
+  "src.badge.demo": "Demo",
+  "src.banner.all": "Mixed view: ⚡ live and 🔬 demo data side by side (see badges); dual-source kWh split in the Energy report",
+  "src.banner.live": "Live mode: only devices fed by real protocols (Modbus / external push); demo devices hidden",
+  "src.banner.demo": "Demo mode: only simulated devices shown; live devices hidden",
+  "src.simnote": "Simulated drills disabled in live mode (honesty boundary: demo triggers never touch live devices)",
+  "energy.source": "Source",
+  "energy.dualsplit": "Dual-source split"
 }

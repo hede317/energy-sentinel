@@ -1,6 +1,7 @@
 mod alarm;
 mod collector;
 mod db;
+mod modbus;
 mod sim;
 mod web;
 

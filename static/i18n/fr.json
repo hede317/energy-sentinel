@@ -130,5 +130,16 @@
   "modal.cancel": "Annuler",
   "modal.returncheck": "Vérification : {action} → {device}",
   "nav.topology": "Modbus & Topologie",
-  "nav.cmms": "O&M PV/Stockage (CMMS)"
+  "nav.cmms": "O&M PV/Stockage (CMMS)",
+  "src.all": "Tout",
+  "src.live": "⚡ Réel",
+  "src.demo": "🔬 Démo",
+  "src.badge.live": "Réel",
+  "src.badge.demo": "Démo",
+  "src.banner.all": "Vue mixte : données ⚡ réelles et 🔬 démo côte à côte (voir badges) ; répartition par source dans le rapport",
+  "src.banner.live": "Mode réel : uniquement les équipements alimentés par protocoles réels (Modbus / push externe) ; équipements de démo masqués",
+  "src.banner.demo": "Mode démo : uniquement les équipements simulés ; équipements réels masqués",
+  "src.simnote": "Déclencheurs de simulation désactivés en mode réel (les démos ne touchent jamais le réel)",
+  "energy.source": "Source",
+  "energy.dualsplit": "Répartition double source"
 }

@@ -1,6 +1,7 @@
 use crate::alarm::{Engine, Latest};
 use crate::db::{self, Db};
-use crate::sim::SimWorld;
+use crate::modbus;
+use crate::sim::{SimWorld, Snap};
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -8,12 +9,20 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use tokio::sync::{broadcast, Mutex};
 
-/// 每设备最新值（values: metric -> value）
+/// 每设备最新值（values: metric -> value；src = 产出源 sim|rtu|ext，双源盖章）
 #[derive(Clone, Debug, Default)]
 pub struct DevState {
     pub ts: i64,
     pub comm: bool,
+    pub src: String,
     pub values: HashMap<String, f64>,
+}
+
+impl DevState {
+    /// 输出口径：空源按 sim（兼容重启前的历史条目）
+    pub fn source(&self) -> &str {
+        if self.src.is_empty() { "sim" } else { &self.src }
+    }
 }
 
 pub struct App {
@@ -24,6 +33,15 @@ pub struct App {
     pub rules_dirty: AtomicBool,
     pub tou_cache: std::sync::Mutex<(i64, crate::db::Tou)>, // (缓存时间戳, TOU配置)
     pub db_rows: std::sync::atomic::AtomicU64,              // readings 表行数（每分钟刷新）
+    /// 设备→采集源声明（devices.driver，每分钟刷新；双源分流唯一依据）
+    pub sources: RwLock<HashMap<String, String>>,
+    /// rtu/tcp 设备的采集计划（点位来自 metrics 表，每分钟刷新）
+    pub plans: RwLock<Vec<modbus::DevPlan>>,
+    /// OpenPLC Modbus 持久连接槽位（单客户端归属轮询器，防外部脚本踢线）
+    #[cfg(feature = "rtu")]
+    pub plc: tokio::sync::Mutex<Option<tokio_modbus::client::Context>>,
+    #[cfg(not(feature = "rtu"))]
+    pub plc: (),
 }
 
 pub type SharedApp = Arc<App>;
@@ -45,7 +63,30 @@ pub fn build_app(db: Db) -> SharedApp {
             currency: "CNY".into(),
         })),
         db_rows: std::sync::atomic::AtomicU64::new(0),
+        sources: RwLock::new(HashMap::new()),
+        plans: RwLock::new(Vec::new()),
+        #[cfg(feature = "rtu")]
+        plc: tokio::sync::Mutex::new(None),
+        #[cfg(not(feature = "rtu"))]
+        plc: (),
     })
+}
+
+/// 刷新设备源声明 + rtu 采集计划（双源分流的唯一依据）
+pub async fn refresh_sources(app: &SharedApp) {
+    let c = app.db.lock().await;
+    let rows = c
+        .query("SELECT id, driver FROM devices WHERE enabled", &[])
+        .await
+        .unwrap_or_default();
+    drop(c);
+    let map: HashMap<String, String> = rows
+        .iter()
+        .map(|r| (r.get::<_, String>(0), r.get::<_, String>(1)))
+        .collect();
+    let plans = modbus::load_plans(&app.db, &map).await;
+    *app.sources.write().unwrap() = map;
+    *app.plans.write().unwrap() = plans;
 }
 
 /// 读 readings 表规模（前端状态条展示），失败保留上次值
@@ -71,7 +112,7 @@ pub async fn tou_cached(app: &SharedApp) -> crate::db::Tou {
     tou
 }
 
-/// 主循环：2s 一拍 —— 仿真推进 → 最新值 → 告警评估 → SSE 广播 → 周期落库
+/// 主循环：2s 一拍 —— 双源分流（sim 推进 + Modbus 轮询）→ 最新值 → 告警评估 → SSE 广播 → 周期落库
 pub async fn run(app: SharedApp) {
     let mut engine = Engine::new();
     let mut tick: u64 = 0;
@@ -93,15 +134,51 @@ pub async fn run(app: SharedApp) {
         });
     }
 
+    refresh_sources(&app).await; // 启动即建立双源分流
+
     loop {
         interval.tick().await;
         tick += 1;
-        if tick % 30 == 1 { refresh_db_rows(&app).await; } // 每分钟一次
+        if tick % 30 == 1 {
+            refresh_db_rows(&app).await; // 每分钟一次
+            refresh_sources(&app).await; // driver/点位变化（含真机接入日切换）一分钟内生效
+        }
+        // ---- 双源分流 ----
+        let srcs = app.sources.read().unwrap().clone();
+        let sim_ids: std::collections::HashSet<String> = srcs
+            .iter()
+            .filter(|(_, d)| d.as_str() == "sim")
+            .map(|(id, _)| id.clone())
+            .collect();
         let (snaps, injections, uptime_s) = {
             let mut sim = app.sim.lock().await;
-            let s = sim.tick(2.0);
+            let s = sim.tick(2.0, &sim_ids);
             (s, sim.active_injections(), sim.uptime_s())
         };
+        // 实测侧：rtu/tcp 设备走真实 Modbus 轮询；
+        // 未编译 rtu feature 时诚实 OFFLINE（comm=false 冻结），绝不拿仿真数顶替
+        let rtu_snaps: Vec<Snap> = if srcs.iter().any(|(_, d)| d.as_str() == "rtu" || d.as_str() == "tcp") {
+            #[cfg(feature = "rtu")]
+            {
+                let plans = app.plans.read().unwrap().clone();
+                let mut out = Vec::new();
+                for p in &plans {
+                    out.push(modbus::poll(p, &app.plc).await);
+                }
+                out
+            }
+            #[cfg(not(feature = "rtu"))]
+            {
+                let ts = chrono::Utc::now().timestamp_millis();
+                srcs.iter()
+                    .filter(|(_, d)| d.as_str() == "rtu" || d.as_str() == "tcp")
+                    .map(|(id, _)| modbus::dead_snap_dev(id, ts))
+                    .collect()
+            }
+        } else {
+            Vec::new()
+        };
+        let snaps: Vec<Snap> = snaps.into_iter().chain(rtu_snaps).collect();
 
         // 更新最新值（通信故障：整台冻结，等看门狗报警）
         {
@@ -111,6 +188,7 @@ pub async fn run(app: SharedApp) {
                 if s.comm {
                     entry.ts = s.ts;
                     entry.comm = true;
+                    entry.src = srcs.get(&s.device).cloned().unwrap_or_else(|| "sim".into());
                     let v = &mut entry.values;
                     v.insert("u".into(), s.u);
                     v.insert("i".into(), s.i);
@@ -127,6 +205,7 @@ pub async fn run(app: SharedApp) {
                     v.insert("breaker".into(), if s.breaker { 1.0 } else { 0.0 });
                 } else {
                     entry.comm = false;
+                    entry.src = srcs.get(&s.device).cloned().unwrap_or_else(|| "sim".into());
                 }
             }
         }
@@ -148,6 +227,7 @@ pub async fn run(app: SharedApp) {
                 }
                 m.insert("_ts".into(), json!(st.ts));
                 m.insert("_comm".into(), json!(st.comm));
+                m.insert("_src".into(), json!(st.source()));
                 (id.clone(), serde_json::Value::Object(m))
             })
             .collect();
@@ -192,11 +272,13 @@ async fn alarm_counts(db: &Db) -> serde_json::Value {
 }
 
 async fn persist(app: &SharedApp, latest: &Latest, epi_only: bool) {
-    // 批量单次 IO（UNNEST 多值插入），避免 25 次往返长时间占住全局 DB 锁
+    // 批量单次 IO（UNNEST 多值插入），避免 25 次往返长时间占住全局 DB 锁；
+    // 每行写入瞬间盖 source 章（sim|rtu|ext），事后改 driver 不影响历史归属
     let mut ts_v: Vec<chrono::DateTime<chrono::Utc>> = Vec::new();
     let mut dev_v: Vec<String> = Vec::new();
     let mut met_v: Vec<String> = Vec::new();
     let mut val_v: Vec<f64> = Vec::new();
+    let mut src_v: Vec<String> = Vec::new();
     let now = chrono::Utc::now();
     for (dev, st) in latest {
         if !st.comm { continue; }
@@ -215,6 +297,7 @@ async fn persist(app: &SharedApp, latest: &Latest, epi_only: bool) {
                 dev_v.push(dev.clone());
                 met_v.push((*m).to_string());
                 val_v.push(*v);
+                src_v.push(st.source().to_string());
             }
         }
     }
@@ -222,8 +305,8 @@ async fn persist(app: &SharedApp, latest: &Latest, epi_only: bool) {
     let c = app.db.lock().await;
     let _ = c
         .execute(
-            "INSERT INTO readings(ts,device_id,metric,value) SELECT * FROM UNNEST($1::timestamptz[],$2::text[],$3::text[],$4::float8[])",
-            &[&ts_v, &dev_v, &met_v, &val_v],
+            "INSERT INTO readings(ts,device_id,metric,value,source) SELECT * FROM UNNEST($1::timestamptz[],$2::text[],$3::text[],$4::float8[],$5::text[])",
+            &[&ts_v, &dev_v, &met_v, &val_v, &src_v],
         )
         .await;
     drop(c);

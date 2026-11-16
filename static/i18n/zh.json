@@ -130,5 +130,16 @@
   "modal.cancel": "取消",
   "modal.returncheck": "返校核对：{action} → {device}",
   "nav.topology": "Modbus与拓扑",
-  "nav.cmms": "光储运维(CMMS)"
+  "nav.cmms": "光储运维(CMMS)",
+  "src.all": "全部",
+  "src.live": "⚡ 实测",
+  "src.demo": "🔬 演示",
+  "src.badge.live": "实测",
+  "src.badge.demo": "演示",
+  "src.banner.all": "混合视图：⚡实测 与 🔬演示 数据并存（以徽章区分）；电费口径与双源拆分见能耗报表",
+  "src.banner.live": "实测数据模式：仅显示真实协议（Modbus 采集 / 外部推送）的设备，演示设备已隐藏",
+  "src.banner.demo": "演示数据模式：仅显示仿真注入设备，真实设备已隐藏",
+  "src.simnote": "实测模式下仿真注入停用（诚实边界：演示触发器不作用于实测设备）",
+  "energy.source": "源",
+  "energy.dualsplit": "双源拆分"
 }

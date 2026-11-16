@@ -182,6 +182,7 @@ async fn api_state(State(app): State<SharedApp>) -> Response {
             }
             m.insert("_ts".into(), json!(st.ts));
             m.insert("_comm".into(), json!(st.comm));
+            m.insert("_src".into(), json!(st.source()));
             (id.clone(), Value::Object(m))
         })
         .collect();
@@ -543,14 +544,15 @@ async fn integrate_day(app: &SharedApp, dev: &str, day: NaiveDate) -> DayBuckets
     b
 }
 
-async fn device_names(app: &SharedApp) -> Vec<(String, String)> {
+/// 配电馈线清单（id, name, driver）——报表按源分列的依据
+async fn device_names(app: &SharedApp) -> Vec<(String, String, String)> {
     let c = app.db.lock().await;
     let rows = c
-        .query("SELECT id,name FROM devices WHERE kind='feeder' ORDER BY id", &[])
+        .query("SELECT id,name,driver FROM devices WHERE kind='feeder' ORDER BY id", &[])
         .await
         .unwrap_or_default();
     drop(c);
-    rows.iter().map(|r| (r.get(0), r.get(1))).collect()
+    rows.iter().map(|r| (r.get(0), r.get(1), r.get(2))).collect()
 }
 
 async fn report_day(State(app): State<SharedApp>, Query(q): Query<HashMap<String, String>>) -> Response {
@@ -561,11 +563,17 @@ async fn report_day(State(app): State<SharedApp>, Query(q): Query<HashMap<String
     let tou = db::get_tou(&app.db).await;
     let mut devices = Vec::new();
     let mut tot = DayBuckets { peak: 0.0, flat: 0.0, valley: 0.0, total: 0.0 };
-    for (id, name) in device_names(&app).await {
+    let mut tot_sim = DayBuckets { peak: 0.0, flat: 0.0, valley: 0.0, total: 0.0 };
+    let mut tot_rtu = DayBuckets { peak: 0.0, flat: 0.0, valley: 0.0, total: 0.0 };
+    for (id, name, drv) in device_names(&app).await {
         let b = integrate_day(&app, &id, day).await;
         tot.total += b.total; tot.peak += b.peak; tot.flat += b.flat; tot.valley += b.valley;
+        // 双源分列：演示与实测 kWh 永不混算
+        let bucket = if drv == "rtu" || drv == "tcp" { &mut tot_rtu } else { &mut tot_sim };
+        bucket.total += b.total; bucket.peak += b.peak; bucket.flat += b.flat; bucket.valley += b.valley;
         devices.push(json!({
-            "id": id, "name": name, "total_kwh": r2(b.total), "peak_kwh": r2(b.peak),
+            "id": id, "name": name, "source": drv,
+            "total_kwh": r2(b.total), "peak_kwh": r2(b.peak),
             "flat_kwh": r2(b.flat), "valley_kwh": r2(b.valley),
             "cost": r2(b.peak * tou.price("peak") + b.flat * tou.price("flat") + b.valley * tou.price("valley")),
         }));
@@ -578,6 +586,7 @@ async fn report_day(State(app): State<SharedApp>, Query(q): Query<HashMap<String
             "total_kwh": r2(tot.total), "peak_kwh": r2(tot.peak), "flat_kwh": r2(tot.flat),
             "valley_kwh": r2(tot.valley),
             "cost": r2(tot.peak * tou.price("peak") + tot.flat * tou.price("flat") + tot.valley * tou.price("valley")),
+            "sim_kwh": r2(tot_sim.total), "rtu_kwh": r2(tot_rtu.total),
         },
     }))
     .into_response()
@@ -610,24 +619,25 @@ async fn report_month(State(app): State<SharedApp>, Query(q): Query<HashMap<Stri
     let start = day_start(y, m, 1);
     let end = if m == 12 { day_start(y + 1, 1, 1) } else { day_start(y, m + 1, 1) };
     let now_cap = Utc::now().min(end);
-    // 单次 SQL 拉整月 p 序列，内存按日积分（替代原 31天×设备 N+1 查询）
+    // 单次 SQL 拉整月 p 序列，内存按日积分（替代原 31天×设备 N+1 查询）；带 source 按源分列
     let c = app.db.lock().await;
     let rows = c
         .query(
-            "SELECT device_id,ts,value FROM readings WHERE metric='p' AND ts>=$1 AND ts<$2 ORDER BY ts",
+            "SELECT device_id,source,ts,value FROM readings WHERE metric='p' AND ts>=$1 AND ts<$2 ORDER BY ts",
             &[&start, &now_cap],
         )
         .await
         .unwrap_or_default();
     drop(c);
-    let feeders: std::collections::HashSet<String> = devs.iter().map(|(id, _)| id.clone()).collect();
+    let feeders: std::collections::HashSet<String> = devs.iter().map(|(id, _, _)| id.clone()).collect();
     let mut acc: std::collections::HashMap<(String, NaiveDate), [f64; 3]> = Default::default(); // [peak, flat, valley]
     let mut prev: std::collections::HashMap<String, (DateTime<Utc>, f64)> = Default::default();
     for r in rows {
         let dev: String = r.get(0);
         if !feeders.contains(&dev) { continue; }
-        let ts: DateTime<Utc> = r.get(1);
-        let v: f64 = r.get(2);
+        let _src: String = r.get(1); // 历史行自带盖章；分列口径按设备当前 driver（见下）
+        let ts: DateTime<Utc> = r.get(2);
+        let v: f64 = r.get(3);
         if let Some((pt, pv)) = prev.get(&dev) {
             let gap = (ts - *pt).num_seconds().clamp(0, 60) as f64;
             let kwh = pv * gap / 3600.0;
@@ -645,13 +655,20 @@ async fn report_month(State(app): State<SharedApp>, Query(q): Query<HashMap<Stri
     while d <= today && d.month() == m {
         let mut total = 0.0;
         let mut cost = 0.0;
-        for (id, _) in &devs {
+        let mut sim_kwh = 0.0;
+        let mut rtu_kwh = 0.0;
+        for (id, _, drv) in &devs {
             if let Some([pk, fl, vl]) = acc.get(&(id.clone(), d)) {
-                total += pk + fl + vl;
+                let kwh = pk + fl + vl;
+                total += kwh;
                 cost += pk * tou.price("peak") + fl * tou.price("flat") + vl * tou.price("valley");
+                if drv == "rtu" || drv == "tcp" { rtu_kwh += kwh; } else { sim_kwh += kwh; }
             }
         }
-        days.push(json!({"date": d.format("%Y-%m-%d").to_string(), "total_kwh": r2(total), "cost": r2(cost)}));
+        days.push(json!({
+            "date": d.format("%Y-%m-%d").to_string(), "total_kwh": r2(total), "cost": r2(cost),
+            "sim_kwh": r2(sim_kwh), "rtu_kwh": r2(rtu_kwh),
+        }));
         d += chrono::Duration::days(1);
     }
     Json(json!({"month": month, "days": days, "currency": tou.currency})).into_response()
@@ -698,6 +715,29 @@ async fn sim_cmd(State(app): State<SharedApp>, Json(b): Json<Value>) -> Response
     let device = b.get("device").and_then(|v| v.as_str()).unwrap_or("feeder-im");
     let user = b.get("user").and_then(|v| v.as_str()).unwrap_or("ops");
     let reason = b.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+
+    // 诚实边界：网页演练注入是"仿真世界"的特权，实测（rtu/tcp）设备不吃假数。
+    // 实测设备的演练走 Modbus 遥调/真实协议操作（报文台留真帧），拒绝也留审计痕。
+    if matches!(action, "overload" | "comm_fault" | "breaker") {
+        let drv = app.sources.read().unwrap().get(device).cloned();
+        if let Some(d) = drv {
+            if d != "sim" {
+                let c = app.db.lock().await;
+                let _ = c
+                    .execute(
+                        "INSERT INTO audit_logs(username,action,device,detail,result) VALUES($1,$2,$3,$4,'rejected')",
+                        &[&user, &format!("sim_{action}"), &device,
+                          &format!("实测设备({d})拒绝网页演练注入")],
+                    )
+                    .await;
+                drop(c);
+                return err(
+                    &format!("实测设备（{d}）不接受网页演练注入；请走 Modbus 遥调或现场操作，报文台可见真实帧"),
+                    StatusCode::BAD_REQUEST,
+                );
+            }
+        }
+    }
 
     // (审计动作名, 目标设备, 明细)：每个演练/整定操作都留痕
     let mut sim = app.sim.lock().await;
@@ -933,7 +973,7 @@ async fn open_ingest(State(app): State<SharedApp>, headers: HeaderMap, Json(b): 
             .await;
         let _ = c
             .execute(
-                "INSERT INTO readings(ts,device_id,metric,value) VALUES(now(),$1,$2,$3)",
+                "INSERT INTO readings(ts,device_id,metric,value,source) VALUES(now(),$1,$2,$3,'ext')",
                 &[&dev, &metric, &value],
             )
             .await;
@@ -943,6 +983,7 @@ async fn open_ingest(State(app): State<SharedApp>, headers: HeaderMap, Json(b): 
     let st = lat.entry(dev.to_string()).or_default();
     st.ts = Utc::now().timestamp_millis();
     st.comm = true;
+    st.src = "ext".into();
     st.values.insert(metric.to_string(), value);
     drop(lat);
     Json(json!({"ok": true})).into_response()
@@ -962,7 +1003,7 @@ async fn open_export_csv(
         .unwrap_or_else(|| Local::now().date_naive());
     let tou = db::get_tou(&app.db).await;
     let mut csv = String::from("device,total_kwh,peak_kwh,flat_kwh,valley_kwh,cost\n");
-    for (id, _name) in device_names(&app).await {
+    for (id, _name, _drv) in device_names(&app).await {
         let b = integrate_day(&app, &id, day).await;
         let cost = b.peak * tou.price("peak") + b.flat * tou.price("flat") + b.valley * tou.price("valley");
         csv.push_str(&format!(

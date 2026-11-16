@@ -130,5 +130,16 @@
   "modal.cancel": "منسوخ",
   "modal.returncheck": "تصدیق: {action} → {device}",
   "nav.topology": "Modbus اور ٹوپولوجی",
-  "nav.cmms": "PV/ESS آپریشنز (CMMS)"
+  "nav.cmms": "PV/ESS آپریشنز (CMMS)",
+  "src.all": "سب",
+  "src.live": "⚡ حقیقی",
+  "src.demo": "🔬 ڈیمو",
+  "src.badge.live": "حقیقی",
+  "src.badge.demo": "ڈیمو",
+  "src.banner.all": "مشترک منظر: ⚡ حقیقی اور 🔬 ڈیمو ڈیٹا ساتھ ساتھ (بیج دیکھیں)؛ رپورٹ میں ماخذ کے مطابق تفصیل",
+  "src.banner.live": "حقیقی وضع: صرف وہ آلات جو حقیقی پروٹوکول سے جڑے ہیں (Modbus / بیرونی push)؛ ڈیمو آلات چھپے ہوئے",
+  "src.banner.demo": "ڈیمو وضع: صرف سمولیٹڈ آلات؛ حقیقی آلات چھپے ہوئے",
+  "src.simnote": "حقیقی وضع میں سمولیشن بند (ڈیمو حقیقی آلات پر اثر نہیں ڈالتے)",
+  "energy.source": "ماخذ",
+  "energy.dualsplit": "ماخذ کے مطابق تفصیل"
 }

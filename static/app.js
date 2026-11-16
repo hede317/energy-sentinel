@@ -63,7 +63,60 @@ const S = {
   tariff: {}, currency: 'CNY',
   touSpans: null, hist: [], todayKwh: null, soe: [],
   injections: [], uptime_s: null, db_rows: null, audit: [], energyData: null,
+  // 双源架构：视图模式（all 全部 | live 实测 | demo 演示）+ 设备源声明缓存
+  srcMode: localStorage.getItem('es_src') || 'all',
+  devSrc: {},
 };
+/* ---------- 双源架构（诚实/严实） ---------- */
+function srcOf(id) {
+  return (S.devices[id] && S.devices[id]._src) || S.devSrc[id] || 'sim';
+}
+function isLiveSrc(s) { return s === 'rtu' || s === 'tcp' || s === 'ext'; }
+function srcVisible(id) {
+  if (S.srcMode === 'all') return true;
+  const live = isLiveSrc(srcOf(id));
+  return S.srcMode === 'live' ? live : !live;
+}
+function setSrcMode(mode) {
+  S.srcMode = mode; localStorage.setItem('es_src', mode);
+  applySrcMode(); loadEnergy().catch(() => {});
+}
+function applySrcMode() {
+  document.body.classList.toggle('mode-live', S.srcMode === 'live');
+  document.body.classList.toggle('mode-demo', S.srcMode === 'demo');
+  const b = document.getElementById('srcBanner');
+  if (b) b.dataset.mode = S.srcMode;
+  const bt = document.getElementById('srcBannerTxt');
+  if (bt) bt.textContent = t('src.banner.' + S.srcMode) || '';
+  document.querySelectorAll('#srcSeg button').forEach(el => el.classList.toggle('active', el.dataset.mode === S.srcMode));
+  applySrcAttrs();
+}
+function applySrcAttrs() {
+  for (const id of Object.keys(CFG)) {
+    const s = srcOf(id);
+    const card = document.getElementById('card-' + id);
+    if (card) card.dataset.src = s;
+    const fg = document.getElementById('fg-' + id);
+    if (fg) fg.dataset.src = s;
+    const badge = document.getElementById('srcc-' + id);
+    if (badge) {
+      const live = isLiveSrc(s);
+      badge.textContent = t(live ? 'src.badge.live' : 'src.badge.demo');
+      badge.className = 'srcbadge ' + (live ? 'live' : 'demo');
+    }
+  }
+  const mm = document.getElementById('box-meter-main');
+  if (mm) mm.dataset.src = srcOf('meter-main');
+}
+async function loadDevSrc() {
+  try {
+    const d = await api('/api/devices');
+    const m = {};
+    (d.devices || []).forEach(v => { m[v.id] = v.driver; });
+    S.devSrc = m;
+    applySrcAttrs();
+  } catch (e) { /* 状态接口失败保持上次声明 */ }
+}
 const THRESHOLDS = {
   u: [{ v: 400, c: '#EF4444' }, { v: 360, c: '#F59E0B' }],
   pressure: [{ v: 0.38, c: '#F59E0B' }],
@@ -91,6 +144,7 @@ async function loadLang(l) {
   document.getElementById('langSel').value = l;
   buildFeeders(); buildCards(); buildKpis(); bindTrendDevs(); loadApiDoc();
   renderTou(); updateDiagram(); updateCards(); updateKpis(); loadTab(curTab);
+  applySrcMode(); // 语言切换重建 DOM 后恢复双源视图（徽章/横幅/过滤）
 }
 
 /* ---------- API ---------- */
@@ -301,7 +355,7 @@ function buildCards() {
          <div class="row"><span>EPi kWh</span><span class="num" id="c-${id}-epi">--</span></div>`;
     return `
     <div class="devcard" id="card-${id}" style="border-top:3px solid ${CFG[id].color}">
-      <div class="name"><span>${t('dev.' + id)}</span><span><span class="offbadge" id="offc-${id}" hidden>OFFLINE</span><span class="dot" id="cdot-${id}"></span></span></div>
+      <div class="name"><span>${t('dev.' + id)}</span><span><span class="srcbadge demo" id="srcc-${id}"></span><span class="offbadge" id="offc-${id}" hidden>OFFLINE</span><span class="dot" id="cdot-${id}"></span></span></div>
       <div class="p num"><span id="c-${id}-p">--</span> <small>kW</small></div>
       ${rows}
     </div>`;
@@ -766,6 +820,15 @@ function buildKpis() {
 }
 const setPill = (id, text, cls) => { const el = document.getElementById('kpill-' + id); if (el) { el.textContent = text; el.className = 'kpi-pill ' + cls; } };
 function updateKpis() {
+  // 诚实边界：实测模式下，总表若还不是实测源，KPI 拒绝拿仿真数顶数
+  if (S.srcMode === 'live' && !isLiveSrc(srcOf('meter-main'))) {
+    ['totalp', 'today', 'loadrate', 'pf', 'imbalance', 'thd'].forEach(id => {
+      const el = document.getElementById('kpi-' + id); if (el) el.textContent = '--';
+      const pill = document.getElementById('kpill-' + id);
+      if (pill) { pill.textContent = '--'; pill.className = 'kpi-pill'; }
+    });
+    return;
+  }
   const m = S.devices['meter-main']; if (!m) return;
   const set = (id, v) => { const el = document.getElementById('kpi-' + id); if (el) el.textContent = v; };
   set('totalp', f1(m.p)); set('loadrate', f1(m.load_rate)); set('pf', f2(m.pf));
@@ -900,13 +963,14 @@ function exportCsv() {
   const d = S.energyData; if (!d) return toast('暂无可导出数据', 'warn');
   let rows;
   if (S.energyView === 'day') {
-    rows = [['设备', '总电量(kWh)', '峰段(kWh)', '平段(kWh)', '谷段(kWh)', '电费']];
-    (d.devices || []).forEach(v => rows.push([v.name, v.total_kwh, v.peak_kwh, v.flat_kwh, v.valley_kwh, v.cost]));
+    rows = [['设备', '源', '总电量(kWh)', '峰段(kWh)', '平段(kWh)', '谷段(kWh)', '电费']];
+    (d.devices || []).forEach(v => rows.push([v.name, v.source === 'rtu' || v.source === 'tcp' || v.source === 'ext' ? '实测' : '演示', v.total_kwh, v.peak_kwh, v.flat_kwh, v.valley_kwh, v.cost]));
     const tt = d.totals || {};
-    rows.push(['合计', tt.total_kwh, tt.peak_kwh, tt.flat_kwh, tt.valley_kwh, tt.cost]);
+    rows.push(['合计', '', tt.total_kwh, tt.peak_kwh, tt.flat_kwh, tt.valley_kwh, tt.cost]);
+    rows.push(['双源拆分', '', `演示 ${tt.sim_kwh ?? ''} kWh / 实测 ${tt.rtu_kwh ?? ''} kWh`, '', '', '', '']);
   } else {
-    rows = [['日期', '电量(kWh)', '电费']];
-    (d.days || []).forEach(v => rows.push([v.date, v.total_kwh, v.cost]));
+    rows = [['日期', '电量(kWh)', '演示(kWh)', '实测(kWh)', '电费']];
+    (d.days || []).forEach(v => rows.push([v.date, v.total_kwh, v.sim_kwh ?? '', v.rtu_kwh ?? '', v.cost]));
   }
   const csv = '\uFEFF' + rows.map(r => r.map(x => `"${String(x ?? '').replaceAll('"', '""')}"`).join(',')).join('\r\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
@@ -929,21 +993,28 @@ async function loadEnergy() {
     renderEnergySummary(d);
     document.getElementById('energyTariff').textContent =
       `${t('energy.peak')}${d.tariff.peak} / ${t('energy.flat')}${d.tariff.flat} / ${t('energy.valley')}${d.tariff.valley} ${d.currency === 'CNY' ? '¥/kWh' : '$/kWh'}`;
-    const rows = d.devices.map(v => `<tr>
-      <td>${t('dev.' + v.id, null) || v.name}</td><td>${v.total_kwh}</td><td>${v.peak_kwh}</td>
-      <td>${v.flat_kwh}</td><td>${v.valley_kwh}</td><td>${v.cost}</td></tr>`);
-    host.innerHTML = `<table><thead><tr><th>${t('energy.device')}</th><th>kWh ${t('energy.total')}</th>
+    const rows = d.devices.map(v => {
+      const live = isLiveSrc(v.source);
+      return `<tr>
+      <td>${t('dev.' + v.id, null) || v.name}</td>
+      <td><span class="srcbadge ${live ? 'live' : 'demo'}">${t(live ? 'src.badge.live' : 'src.badge.demo')}</span></td>
+      <td>${v.total_kwh}</td><td>${v.peak_kwh}</td>
+      <td>${v.flat_kwh}</td><td>${v.valley_kwh}</td><td>${v.cost}</td></tr>`;
+    });
+    const tt = d.totals || {};
+    host.innerHTML = `<table><thead><tr><th>${t('energy.device')}</th><th>${t('energy.source')}</th><th>kWh ${t('energy.total')}</th>
       <th>${t('energy.peak')}</th><th>${t('energy.flat')}</th><th>${t('energy.valley')}</th><th>${t('energy.cost')}</th></tr></thead><tbody>
-      ${rows.join('')}<tr style="font-weight:700"><td>${t('energy.totals')}</td><td>${d.totals.total_kwh}</td>
-      <td>${d.totals.peak_kwh}</td><td>${d.totals.flat_kwh}</td><td>${d.totals.valley_kwh}</td><td>${d.totals.cost}</td></tr></tbody></table>`;
+      ${rows.join('')}<tr style="font-weight:700"><td>${t('energy.totals')}</td><td></td><td>${tt.total_kwh}</td>
+      <td>${tt.peak_kwh}</td><td>${tt.flat_kwh}</td><td>${tt.valley_kwh}</td><td>${tt.cost}</td></tr>
+      <tr><td>${t('energy.dualsplit')}</td><td colspan="6">🔬 ${t('src.badge.demo')} ${tt.sim_kwh ?? '--'} kWh · ⚡ ${t('src.badge.live')} ${tt.rtu_kwh ?? '--'} kWh</td></tr></tbody></table>`;
     drawStackedBar(canvas, d.devices.map(v => ({ name: t('dev.' + v.id) || v.name, peak: v.peak_kwh, flat: v.flat_kwh, valley: v.valley_kwh })));
   } else {
     const month = date.slice(0, 7);
     const d = await api(`/api/report/month?month=${month}`);
     S.energyData = d;
     renderEnergySummary(d);
-    const rows = d.days.map(v => `<tr><td>${v.date}</td><td>${v.total_kwh}</td><td>${v.cost}</td></tr>`).join('');
-    host.innerHTML = `<table><thead><tr><th>${t('energy.date')}</th><th>kWh</th><th>${t('energy.cost')}</th></tr></thead><tbody>${rows}</tbody></table>`;
+    const rows = d.days.map(v => `<tr><td>${v.date}</td><td>${v.total_kwh}</td><td>${v.sim_kwh ?? '--'}</td><td>${v.rtu_kwh ?? '--'}</td><td>${v.cost}</td></tr>`).join('');
+    host.innerHTML = `<table><thead><tr><th>${t('energy.date')}</th><th>kWh</th><th>🔬 ${t('src.badge.demo')}</th><th>⚡ ${t('src.badge.live')}</th><th>${t('energy.cost')}</th></tr></thead><tbody>${rows}</tbody></table>`;
     drawChart(canvas, [{ name: 'kWh', color: '#22d3ee', data: d.days.map(v => [new Date(v.date).getTime(), v.total_kwh]) }]);
   }
 }
@@ -1278,6 +1349,9 @@ function bind() {
   bind();
   setSse(false);
   await loadLang(S.lang);
+  document.querySelectorAll('#srcSeg button').forEach(b => { b.onclick = () => setSrcMode(b.dataset.mode); });
+  applySrcMode();
+  loadDevSrc(); setInterval(loadDevSrc, 60_000); // 设备源声明缓存（真机接入日切换一分钟内生效）
   openSSE();
   api('/api/state').then(s => {
     S.tariff = s.tariff; S.currency = s.currency;

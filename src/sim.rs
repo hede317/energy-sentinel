@@ -193,14 +193,18 @@ impl SimWorld {
         }
     }
 
-    /// 推进一个 tick（dt 秒），返回全部设备快照
-    pub fn tick(&mut self, dt: f64) -> Vec<Snap> {
+    /// 推进一个 tick（dt 秒），只为 driver='sim' 的设备产数（双源架构：sim 世界物理自洽，
+    /// meter-main 只加总 sim 馈线；rtu 设备由 Modbus 采集喂数，这里绝不代产）
+    pub fn tick(&mut self, dt: f64, sim_ids: &std::collections::HashSet<String>) -> Vec<Snap> {
         let mut rng = rand::thread_rng();
         let t = self.elapsed();
         let h = Self::hour_now();
         let ts = chrono::Utc::now().timestamp_millis();
 
-        let feeders = ["feeder-ac", "feeder-im", "feeder-lt", "feeder-it"];
+        let feeders: Vec<&str> = ["feeder-ac", "feeder-im", "feeder-lt", "feeder-it"]
+            .into_iter()
+            .filter(|f| sim_ids.contains(*f))
+            .collect();
         let mut snaps = Vec::new();
         let mut total_p = 0.0;
 
@@ -248,7 +252,7 @@ impl SimWorld {
             });
         }
 
-        // 进线总表 = 分回路之和 × 线损 2%
+        // 进线总表 = 分回路之和 × 线损 2%（只加总 sim 馈线，双源口径不掺实测数）
         let p_main = if main_open { 0.0 } else { total_p * 1.02 };
         let u_m = if main_open { 0.0 } else { u_bus + Self::noise(&mut rng, 0.3) };
         let pf_main = if main_open {
@@ -259,35 +263,39 @@ impl SimWorld {
             (total_p / (total_p * total_p + qs * qs).sqrt()).clamp(0.1, 1.0)
         } else { 0.99 };
         let i_main = if main_open || u_m <= 1.0 { 0.0 } else { p_main * 1000.0 / (1.732 * u_m * pf_main.max(0.1)) };
-        let epi = self.epi.entry("meter-main".into()).or_insert(0.0);
-        *epi += p_main * dt / 3600.0;
-        // 电力衍生指标（教学口径）：三相电压轻度不平衡 + THD + 变压器负载率（额定 400A）
-        let ph = if main_open { 0.0 } else { 220.0 };
-        let ua = if main_open { 0.0 } else { ph * (1.0 + 0.013 * ((t / 60.0) * std::f64::consts::PI).sin()) + Self::noise(&mut rng, 0.5) };
-        let ub = if main_open { 0.0 } else { ph * (1.0 - 0.009) + Self::noise(&mut rng, 0.5) };
-        let uc = if main_open { 0.0 } else { ph * (1.0 - 0.004) + Self::noise(&mut rng, 0.5) };
-        let mean_ph = (ua + ub + uc) / 3.0;
-        let imbalance = if mean_ph > 1.0 { ((ua.max(ub).max(uc) - ua.min(ub).min(uc)) / mean_ph) * 100.0 } else { 0.0 };
-        let thd = if main_open { 0.0 } else { (2.6 + 1.0 * ((t / 37.0) * std::f64::consts::PI).sin() + Self::noise(&mut rng, 0.3)).clamp(1.5, 5.0) };
-        let load_rate = if main_open { 0.0 } else { i_main / 400.0 * 100.0 };
-        let mut ex_main = std::collections::HashMap::new();
-        ex_main.insert("ua".into(), (ua * 10.0).round() / 10.0);
-        ex_main.insert("ub".into(), (ub * 10.0).round() / 10.0);
-        ex_main.insert("uc".into(), (uc * 10.0).round() / 10.0);
-        ex_main.insert("imbalance".into(), (imbalance * 10.0).round() / 10.0);
-        ex_main.insert("thd".into(), (thd * 10.0).round() / 10.0);
-        ex_main.insert("load_rate".into(), (load_rate * 10.0).round() / 10.0);
-        snaps.push(Snap {
-            device: "meter-main".into(), ts, u: (u_m * 10.0).round() / 10.0,
-            i: (i_main * 10.0).round() / 10.0, p: (p_main * 10.0).round() / 10.0,
-            q: if main_open { 0.0 } else { (p_main * (1.0 - pf_main * pf_main).sqrt() / pf_main.max(0.1) * 10.0).round() / 10.0 },
-            pf: (pf_main * 1000.0).round() / 1000.0,
-            f: if main_open { 0.0 } else { ((50.0 + Self::noise(&mut rng, 0.015)) * 10.0).round() / 10.0 },
-            epi: (*epi * 10.0).round() / 10.0, breaker: !main_open, comm: self.comm_ok("meter-main", t),
-            extra: ex_main,
-        });
-        // 恒压供水实验台
-        snaps.push(self.water_tick(dt, &mut rng, ts));
+        if sim_ids.contains("meter-main") {
+            let epi = self.epi.entry("meter-main".into()).or_insert(0.0);
+            *epi += p_main * dt / 3600.0;
+            // 电力衍生指标（教学口径）：三相电压轻度不平衡 + THD + 变压器负载率（额定 400A）
+            let ph = if main_open { 0.0 } else { 220.0 };
+            let ua = if main_open { 0.0 } else { ph * (1.0 + 0.013 * ((t / 60.0) * std::f64::consts::PI).sin()) + Self::noise(&mut rng, 0.5) };
+            let ub = if main_open { 0.0 } else { ph * (1.0 - 0.009) + Self::noise(&mut rng, 0.5) };
+            let uc = if main_open { 0.0 } else { ph * (1.0 - 0.004) + Self::noise(&mut rng, 0.5) };
+            let mean_ph = (ua + ub + uc) / 3.0;
+            let imbalance = if mean_ph > 1.0 { ((ua.max(ub).max(uc) - ua.min(ub).min(uc)) / mean_ph) * 100.0 } else { 0.0 };
+            let thd = if main_open { 0.0 } else { (2.6 + 1.0 * ((t / 37.0) * std::f64::consts::PI).sin() + Self::noise(&mut rng, 0.3)).clamp(1.5, 5.0) };
+            let load_rate = if main_open { 0.0 } else { i_main / 400.0 * 100.0 };
+            let mut ex_main = std::collections::HashMap::new();
+            ex_main.insert("ua".into(), (ua * 10.0).round() / 10.0);
+            ex_main.insert("ub".into(), (ub * 10.0).round() / 10.0);
+            ex_main.insert("uc".into(), (uc * 10.0).round() / 10.0);
+            ex_main.insert("imbalance".into(), (imbalance * 10.0).round() / 10.0);
+            ex_main.insert("thd".into(), (thd * 10.0).round() / 10.0);
+            ex_main.insert("load_rate".into(), (load_rate * 10.0).round() / 10.0);
+            snaps.push(Snap {
+                device: "meter-main".into(), ts, u: (u_m * 10.0).round() / 10.0,
+                i: (i_main * 10.0).round() / 10.0, p: (p_main * 10.0).round() / 10.0,
+                q: if main_open { 0.0 } else { (p_main * (1.0 - pf_main * pf_main).sqrt() / pf_main.max(0.1) * 10.0).round() / 10.0 },
+                pf: (pf_main * 1000.0).round() / 1000.0,
+                f: if main_open { 0.0 } else { ((50.0 + Self::noise(&mut rng, 0.015)) * 10.0).round() / 10.0 },
+                epi: (*epi * 10.0).round() / 10.0, breaker: !main_open, comm: self.comm_ok("meter-main", t),
+                extra: ex_main,
+            });
+        }
+        // 恒压供水实验台（仅 sim 声明时产数；rtu 日由 PLC 的 PI 闭环喂数）
+        if sim_ids.contains("ws-pump") {
+            snaps.push(self.water_tick(dt, &mut rng, ts));
+        }
         // 光储微网：光伏逆变器 / BMS / PCS（教学口径，按日照与分时电价调度）
         let pv_p = if h > 6.0 && h < 18.5 {
             (((h - 6.0) / 12.5 * std::f64::consts::PI).sin().max(0.0) * 85.0 + Self::noise(&mut rng, 0.8)).max(0.0)
@@ -311,22 +319,28 @@ impl SimWorld {
         pv.insert("dc_u".into(), r1(710.0 + Self::noise(&mut rng, 2.0)));
         pv.insert("p".into(), r1(pv_p));
         pv.insert("temp".into(), r1(48.0 + Self::noise(&mut rng, 1.5)));
-        let pv_epi = self.epi.entry("pv-inv-01".into()).or_insert(0.0);
-        *pv_epi += pv_p * dt / 3600.0;
-        pv.insert("epi".into(), (*pv_epi * 10.0).round() / 10.0);
-        snaps.push(mk("pv-inv-01", comm_pv, pv));
+        if sim_ids.contains("pv-inv-01") {
+            let pv_epi = self.epi.entry("pv-inv-01".into()).or_insert(0.0);
+            *pv_epi += pv_p * dt / 3600.0;
+            pv.insert("epi".into(), (*pv_epi * 10.0).round() / 10.0);
+            snaps.push(mk("pv-inv-01", comm_pv, pv));
+        }
         let mut bms = std::collections::HashMap::new();
         bms.insert("soc".into(), r1(soc));
         bms.insert("soh".into(), 98.2);
         bms.insert("cell_dv".into(), ((18.0 + Self::noise(&mut rng, 3.0)) * 1000.0).round() / 1000.0);
         bms.insert("temp".into(), r1(29.0 + Self::noise(&mut rng, 1.0)));
-        snaps.push(mk("ess-bms-01", comm_bms, bms));
+        if sim_ids.contains("ess-bms-01") {
+            snaps.push(mk("ess-bms-01", comm_bms, bms));
+        }
         let mut pcs = std::collections::HashMap::new();
         pcs.insert("p".into(), pcs_p);
         pcs.insert("p_set".into(), pcs_p);
         pcs.insert("u".into(), 380.0);
         pcs.insert("f".into(), 50.0);
-        snaps.push(mk("ess-pcs-01", comm_pcs, pcs));
+        if sim_ids.contains("ess-pcs-01") {
+            snaps.push(mk("ess-pcs-01", comm_pcs, pcs));
+        }
         snaps
     }
 
